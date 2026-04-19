@@ -1,0 +1,142 @@
+{{ template "base.html" . }}
+{{ define "title" }}显示规则{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header flex-between">
+        <span>播放列表显示规则</span>
+        <button class="btn btn-primary" id="saveRulesBtn">💾 保存排序</button>
+    </div>
+    <p class="text-muted">拖拽行可调整分类显示顺序，点击编辑可配置组内排序和限制。</p>
+    <table class="table" id="rulesTable">
+        <thead>
+            <tr><th style="width:50px">拖拽</th><th>分类</th><th>显示名称</th><th>组内排序</th><th>最大条数</th><th>隐藏空组</th><th>启用</th><th>操作</th></tr>
+        </thead>
+        <tbody id="rulesBody"></tbody>
+    </table>
+</div>
+
+<!-- 编辑模态框 -->
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h3>编辑规则</h3>
+        <form id="ruleForm">
+            <input type="hidden" id="ruleId">
+            <div class="form-group">
+                <label>覆盖显示名称</label>
+                <input id="groupOverride" class="form-control" placeholder="留空则使用分类名">
+            </div>
+            <div class="form-group">
+                <label>组内排序方式</label>
+                <select id="itemSortOrder" class="form-control">
+                    <option value="1">字母升序</option>
+                    <option value="0">字母降序</option>
+                    <option value="2">质量优先</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>每组最多保留源数（0不限制）</label>
+                <input id="maxItems" type="number" class="form-control" value="0">
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="hideEmpty"> 隐藏空分组</label>
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="ruleEnable" checked> 启用</label>
+            </div>
+            <div class="flex" style="justify-content:flex-end; gap:12px;">
+                <button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    let currentRules = [];
+    let dragSrcRow = null;
+    async function loadRules() {
+        try {
+            const data = await API.get('/api/display-rules');
+            currentRules = data.data;
+            renderTable(currentRules);
+        } catch(e) { showMessage(e.message, 'error'); }
+    }
+    function renderTable(rules) {
+        const tbody = document.getElementById('rulesBody');
+        tbody.innerHTML = rules.map(r => `
+            <tr draggable="true" data-id="${r.id}" data-sort="${r.sort_order}">
+                <td>☰</td>
+                <td>${r.category_name || '未分类'}</td>
+                <td>${r.group_override || r.category_name || '-'}</td>
+                <td>${r.item_sort_order === '1' ? '字母升序' : r.item_sort_order === '0' ? '字母降序' : '质量优先'}</td>
+                <td>${r.max_items || '不限制'}</td>
+                <td>${r.hide_empty ? '是' : '否'}</td>
+                <td><span class="badge ${r.enable?'badge-success':'badge-danger'}">${r.enable?'启用':'禁用'}</span></td>
+                <td><button class="btn btn-sm btn-outline edit-btn" data-id="${r.id}">编辑</button></td>
+            </tr>
+        `).join('');
+        bindDragEvents();
+        document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', () => openModal(b.dataset.id)));
+    }
+    function bindDragEvents() {
+        const rows = document.querySelectorAll('#rulesBody tr[draggable]');
+        rows.forEach(row => {
+            row.addEventListener('dragstart', (e) => { dragSrcRow = row; e.dataTransfer.effectAllowed = 'move'; });
+            row.addEventListener('dragover', (e) => e.preventDefault());
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (dragSrcRow && dragSrcRow !== row) {
+                    const tbody = document.getElementById('rulesBody');
+                    const rows = Array.from(tbody.children);
+                    const srcIndex = rows.indexOf(dragSrcRow);
+                    const targetIndex = rows.indexOf(row);
+                    if (srcIndex < targetIndex) row.parentNode.insertBefore(dragSrcRow, row.nextSibling);
+                    else row.parentNode.insertBefore(dragSrcRow, row);
+                }
+            });
+        });
+    }
+    function openModal(id) {
+        const rule = currentRules.find(r => r.id == id);
+        if (!rule) return;
+        document.getElementById('ruleId').value = rule.id;
+        document.getElementById('groupOverride').value = rule.group_override || '';
+        document.getElementById('itemSortOrder').value = rule.item_sort_order || '1';
+        document.getElementById('maxItems').value = rule.max_items || 0;
+        document.getElementById('hideEmpty').checked = rule.hide_empty || false;
+        document.getElementById('ruleEnable').checked = rule.enable;
+        document.getElementById('editModal').style.display = 'flex';
+    }
+    function closeModal() { document.getElementById('editModal').style.display = 'none'; }
+    document.getElementById('ruleForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = document.getElementById('ruleId').value;
+        const rule = currentRules.find(r => r.id == id);
+        if (!rule) return;
+        rule.group_name_override = document.getElementById('groupOverride').value || null;
+        rule.item_sort_order = document.getElementById('itemSortOrder').value;
+        rule.max_items_per_category = parseInt(document.getElementById('maxItems').value);
+        rule.hide_empty_groups = document.getElementById('hideEmpty').checked;
+        rule.enable = document.getElementById('ruleEnable').checked;
+        try {
+            await API.put(`/api/display-rules`, [rule]); // 批量更新接口，这里只更新一个
+            closeModal(); loadRules();
+        } catch(e) { showMessage(e.message, 'error'); }
+    });
+    document.getElementById('saveRulesBtn').addEventListener('click', async () => {
+        const rows = document.querySelectorAll('#rulesBody tr');
+        const updates = [];
+        rows.forEach((row, index) => {
+            const id = row.dataset.id;
+            const rule = currentRules.find(r => r.id == id);
+            if (rule) { rule.sort_order = index * 10; updates.push(rule); }
+        });
+        try {
+            await API.put('/api/display-rules', updates);
+            showMessage('排序已保存', 'success');
+            loadRules();
+        } catch(e) { showMessage(e.message, 'error'); }
+    });
+    loadRules();
+</script>
+{{ end }}
