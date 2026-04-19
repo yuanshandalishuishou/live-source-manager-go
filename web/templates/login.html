@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 直播源管理工具</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #f0f2f5; }
+        .login-card { width: 400px; background: #fff; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 40px; }
+        .login-title { text-align: center; margin-bottom: 30px; font-size: 24px; color: #2c3e50; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2 class="login-title">📡 直播源管理</h2>
+        <form id="loginForm">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" name="username" class="form-control" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" name="password" class="form-control" required>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
+        </form>
+        <div id="errorMsg" class="alert alert-error" style="display:none; margin-top:16px;"></div>
+    </div>
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const data = Object.fromEntries(formData.entries());
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    localStorage.setItem('token', result.token);
+                    window.location.href = '/';
+                } else {
+                    document.getElementById('errorMsg').style.display = 'block';
+                    document.getElementById('errorMsg').textContent = result.error || '登录失败';
+                }
+            } catch (err) {
+                document.getElementById('errorMsg').style.display = 'block';
+                document.getElementById('errorMsg').textContent = '网络错误';
+            }
+        });
+    </script>
+</body>
+</html>
