@@ -1,0 +1,73 @@
+{{ template "base.html" . }}
+{{ define "title" }}订阅管理{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header flex-between">
+        <span>订阅源</span>
+        <button class="btn btn-primary" id="addBtn">➕ 新增订阅</button>
+    </div>
+    <table class="table">
+        <thead><tr><th>ID</th><th>名称</th><th>URL</th><th>更新间隔(秒)</th><th>最后更新</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="subTableBody"></tbody>
+    </table>
+</div>
+<!-- 编辑模态框（简化） -->
+<div id="editModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+    <div style="background:#fff; padding:24px; border-radius:8px; width:500px;">
+        <h3 id="modalTitle">新增订阅</h3>
+        <form id="subForm">
+            <input type="hidden" id="subId">
+            <div class="form-group"><label>名称</label><input id="subName" class="form-control" required></div>
+            <div class="form-group"><label>URL</label><input id="subUrl" class="form-control" required></div>
+            <div class="form-group"><label>更新间隔(秒)</label><input id="subInterval" class="form-control" value="3600"></div>
+            <div class="form-group"><label><input type="checkbox" id="subEnable" checked> 启用</label></div>
+            <div class="flex" style="justify-content:flex-end; gap:12px;">
+                <button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+    async function loadSubs() {
+        const data = await API.get('/api/subscriptions');
+        const tbody = document.getElementById('subTableBody');
+        tbody.innerHTML = data.data.map(s => `
+            <tr><td>${s.id}</td><td>${s.name}</td><td>${s.url}</td><td>${s.update_interval}</td>
+                <td>${s.last_update?new Date(s.last_update).toLocaleString():'-'}</td>
+                <td><span class="badge ${s.enable?'badge-success':'badge-danger'}">${s.enable?'启用':'禁用'}</span></td>
+                <td><button class="btn btn-sm btn-outline edit-btn" data-id="${s.id}">编辑</button>
+                    <button class="btn btn-sm btn-outline del-btn" data-id="${s.id}">删除</button></td>
+            </tr>`).join('');
+        bindEvents();
+    }
+    function bindEvents() {
+        document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', () => openModal(b.dataset.id)));
+        document.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', async () => {
+            if(confirm('确定删除？')) { await API.delete(`/api/subscriptions/${b.dataset.id}`); loadSubs(); }
+        }));
+    }
+    function openModal(id = null) {
+        document.getElementById('editModal').style.display = 'flex';
+        if(id) {
+            // 获取详情填充
+        }
+    }
+    function closeModal() { document.getElementById('editModal').style.display = 'none'; }
+    document.getElementById('subForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = {
+            name: document.getElementById('subName').value,
+            url: document.getElementById('subUrl').value,
+            update_interval: parseInt(document.getElementById('subInterval').value),
+            enable: document.getElementById('subEnable').checked
+        };
+        const id = document.getElementById('subId').value;
+        if(id) await API.put(`/api/subscriptions/${id}`, data);
+        else await API.post('/api/subscriptions', data);
+        closeModal(); loadSubs();
+    });
+    document.getElementById('addBtn').addEventListener('click', () => { document.getElementById('subId').value=''; openModal(); });
+    loadSubs();
+</script>
+{{ end }}
