@@ -1,0 +1,52 @@
+{{ template "base.html" . }}
+{{ define "title" }}播放列表预览{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header flex-between">
+        <span>播放列表预览</span>
+        <div class="flex">
+            <select id="fileSelect" class="form-control">
+                <option value="live.m3u">live.m3u (基础版)</option>
+                <option value="qualified_live.m3u">qualified_live.m3u (精选版)</option>
+                <option value="live.txt">live.txt</option>
+                <option value="qualified_live.txt">qualified_live.txt</option>
+            </select>
+            <button class="btn btn-primary" id="loadBtn">加载</button>
+            <button class="btn btn-outline" id="downloadBtn">⬇ 下载</button>
+        </div>
+    </div>
+    <div style="margin-bottom:12px;">
+        <span>直接访问地址：</span>
+        <a id="directLink" href="#" target="_blank" style="color:#3498db;"></a>
+    </div>
+    <div style="background:#f8f9fa; border-radius:4px; padding:16px; max-height:500px; overflow:auto;">
+        <pre id="previewContent" style="margin:0; white-space:pre-wrap; word-break:break-all; font-family:monospace; font-size:13px;">点击加载按钮查看内容</pre>
+    </div>
+</div>
+<script>
+    const baseURL = window.location.origin.replace(':23456', ':12345'); // 文件服务端口
+    document.getElementById('directLink').href = `${baseURL}/live.m3u`;
+    document.getElementById('directLink').textContent = `${baseURL}/live.m3u`;
+    document.getElementById('fileSelect').addEventListener('change', function() {
+        const file = this.value;
+        document.getElementById('directLink').href = `${baseURL}/${file}`;
+        document.getElementById('directLink').textContent = `${baseURL}/${file}`;
+    });
+    document.getElementById('loadBtn').addEventListener('click', async () => {
+        const file = document.getElementById('fileSelect').value;
+        const url = `${baseURL}/${file}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const text = await response.text();
+            document.getElementById('previewContent').textContent = text;
+        } catch(e) {
+            document.getElementById('previewContent').textContent = `加载失败: ${e.message}`;
+        }
+    });
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+        const file = document.getElementById('fileSelect').value;
+        window.open(`${baseURL}/${file}`, '_blank');
+    });
+</script>
+{{ end }}
