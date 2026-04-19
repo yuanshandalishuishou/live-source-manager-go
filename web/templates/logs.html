@@ -1,0 +1,60 @@
+{{ template "base.html" . }}
+{{ define "title" }}系统日志{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header flex-between">
+        <span>系统日志</span>
+        <div class="flex">
+            <select id="levelFilter" class="form-control" style="width:120px;">
+                <option value="">全部级别</option>
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARN">WARN</option>
+                <option value="ERROR">ERROR</option>
+            </select>
+            <button class="btn btn-primary" id="refreshBtn">刷新</button>
+            <button class="btn btn-outline" id="autoRefreshBtn">⏸ 暂停</button>
+        </div>
+    </div>
+    <div style="max-height:600px; overflow-y:auto; background:#1e1e1e; color:#d4d4d4; font-family:monospace; padding:16px; border-radius:4px;" id="logContainer">
+        <div id="logContent">加载中...</div>
+    </div>
+</div>
+<script>
+    let autoRefresh = true;
+    let timer = null;
+    const levelColors = { 'DEBUG': '#6c757d', 'INFO': '#28a745', 'WARN': '#ffc107', 'ERROR': '#dc3545' };
+    async function loadLogs() {
+        const level = document.getElementById('levelFilter').value;
+        try {
+            const data = await API.get(`/api/logs?limit=200&level=${level}`);
+            renderLogs(data.data);
+        } catch(e) { console.error(e); }
+    }
+    function renderLogs(logs) {
+        const container = document.getElementById('logContent');
+        if (!logs.length) { container.innerHTML = '<div style="color:#888;">暂无日志</div>'; return; }
+        container.innerHTML = logs.reverse().map(l => {
+            const time = new Date(l.created_at).toLocaleString();
+            const module = l.module ? `[${l.module}]` : '';
+            const color = levelColors[l.level] || '#fff';
+            return `<div style="margin-bottom:4px;"><span style="color:#888;">${time}</span> <span style="color:${color};">[${l.level}]</span> ${module} ${escapeHtml(l.message)}</div>`;
+        }).join('');
+    }
+    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+    function startAutoRefresh() {
+        if (timer) clearInterval(timer);
+        timer = setInterval(loadLogs, 3000);
+    }
+    function stopAutoRefresh() { if (timer) { clearInterval(timer); timer = null; } }
+    document.getElementById('refreshBtn').addEventListener('click', loadLogs);
+    document.getElementById('levelFilter').addEventListener('change', loadLogs);
+    document.getElementById('autoRefreshBtn').addEventListener('click', function() {
+        autoRefresh = !autoRefresh;
+        this.textContent = autoRefresh ? '⏸ 暂停' : '▶ 开始';
+        autoRefresh ? startAutoRefresh() : stopAutoRefresh();
+    });
+    loadLogs();
+    startAutoRefresh();
+</script>
+{{ end }}
