@@ -47,3 +47,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+// 显示消息提示（简单版）
+function showMessage(message, type = 'info') {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type === 'error' ? 'error' : 'success'}`;
+    alertDiv.textContent = message;
+    alertDiv.style.position = 'fixed';
+    alertDiv.style.top = '70px';
+    alertDiv.style.right = '20px';
+    alertDiv.style.zIndex = '9999';
+    document.body.appendChild(alertDiv);
+    setTimeout(() => alertDiv.remove(), 3000);
+}
