@@ -1,0 +1,53 @@
+{{ template "base.html" . }}
+{{ define "title" }}仪表盘{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header">系统概览</div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:20px;">
+        <div class="stat-card" style="background:#e3f2fd; padding:20px; border-radius:8px;">
+            <h3>总源数</h3>
+            <p style="font-size:32px; font-weight:600;" id="totalSources">-</p>
+        </div>
+        <div class="stat-card" style="background:#e8f5e9; padding:20px; border-radius:8px;">
+            <h3>活跃源</h3>
+            <p style="font-size:32px; font-weight:600;" id="activeSources">-</p>
+        </div>
+        <div class="stat-card" style="background:#fff3e0; padding:20px; border-radius:8px;">
+            <h3>最后更新</h3>
+            <p style="font-size:16px;" id="lastUpdate">-</p>
+        </div>
+    </div>
+</div>
+<div class="card">
+    <div class="card-header">快速操作</div>
+    <div class="flex" style="gap:12px;">
+        <button class="btn btn-primary" id="triggerUpdateBtn">🔄 立即更新</button>
+        <button class="btn btn-outline" id="testAllBtn">🧪 测试所有源</button>
+    </div>
+    <div id="progressArea" style="margin-top:16px; display:none;">
+        <div class="flex-between">
+            <span>测试进度: <span id="progressText">0/0</span></span>
+            <span id="currentSource"></span>
+        </div>
+        <progress value="0" max="100" style="width:100%; height:20px;"></progress>
+    </div>
+</div>
+<script>
+    async function loadStats() {
+        try {
+            const data = await API.get('/api/stats');
+            document.getElementById('totalSources').textContent = data.total_sources || 0;
+            document.getElementById('activeSources').textContent = data.active_sources || 0;
+            document.getElementById('lastUpdate').textContent = data.last_update ? new Date(data.last_update).toLocaleString() : '未知';
+        } catch(e) { console.error(e); }
+    }
+    document.getElementById('triggerUpdateBtn').addEventListener('click', async () => {
+        try {
+            await API.post('/api/trigger-update', {});
+            showMessage('更新任务已启动', 'success');
+        } catch(e) { showMessage(e.message, 'error'); }
+    });
+    // WebSocket 进度（略，可在需要时实现）
+    loadStats();
+</script>
+{{ end }}
