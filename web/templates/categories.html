@@ -1,0 +1,160 @@
+{{ template "base.html" . }}
+{{ define "title" }}分类管理{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header flex-between">
+        <span>频道分类</span>
+        <button class="btn btn-primary" id="addBtn">➕ 新增分类</button>
+    </div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>分类名称</th>
+                <th>父级ID</th>
+                <th>优先级</th>
+                <th>匹配规则</th>
+                <th>排序</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="categoryTableBody"></tbody>
+    </table>
+</div>
+
+<!-- 编辑模态框 -->
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h3 id="modalTitle">新增分类</h3>
+        <form id="categoryForm">
+            <input type="hidden" id="catId">
+            <div class="form-group">
+                <label>分类名称</label>
+                <input id="catName" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label>父级ID（可选）</label>
+                <input id="catParentId" type="number" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>优先级（越小越优先）</label>
+                <input id="catPriority" type="number" class="form-control" value="100">
+            </div>
+            <div class="form-group">
+                <label>匹配规则类型</label>
+                <select id="ruleType" class="form-control">
+                    <option value="keyword">关键词</option>
+                    <option value="regex">正则表达式</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>匹配内容（每行一个）</label>
+                <textarea id="ruleContent" class="form-control" rows="4" placeholder="每行一个关键词或正则"></textarea>
+            </div>
+            <div class="form-group">
+                <label>显示排序</label>
+                <input id="catSortOrder" type="number" class="form-control" value="0">
+            </div>
+            <div class="form-group">
+                <label>描述</label>
+                <input id="catDesc" class="form-control">
+            </div>
+            <div class="flex" style="justify-content:flex-end; gap:12px;">
+                <button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:1000; }
+.modal-content { background:#fff; padding:24px; border-radius:8px; width:500px; max-height:80vh; overflow-y:auto; }
+</style>
+
+<script>
+    let currentCategories = [];
+    async function loadCategories() {
+        try {
+            const data = await API.get('/api/categories');
+            currentCategories = data.data;
+            renderTable(currentCategories);
+        } catch(e) { showMessage(e.message, 'error'); }
+    }
+    function renderTable(cats) {
+        const tbody = document.getElementById('categoryTableBody');
+        tbody.innerHTML = cats.map(c => `
+            <tr>
+                <td>${c.id}</td>
+                <td>${c.name}</td>
+                <td>${c.parent_id || '-'}</td>
+                <td>${c.priority}</td>
+                <td>${c.keyword_rules ? JSON.stringify(c.keyword_rules).substring(0,30) : '-'}</td>
+                <td>${c.sort_order}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline edit-btn" data-id="${c.id}">编辑</button>
+                    <button class="btn btn-sm btn-outline del-btn" data-id="${c.id}">删除</button>
+                </td>
+            </tr>
+        `).join('');
+        document.querySelectorAll('.edit-btn').forEach(b => b.addEventListener('click', () => openModal(b.dataset.id)));
+        document.querySelectorAll('.del-btn').forEach(b => b.addEventListener('click', async () => {
+            if(confirm('确定删除？')) { await API.delete(`/api/categories/${b.dataset.id}`); loadCategories(); }
+        }));
+    }
+    function openModal(id = null) {
+        document.getElementById('editModal').style.display = 'flex';
+        document.getElementById('catId').value = '';
+        document.getElementById('catName').value = '';
+        document.getElementById('catParentId').value = '';
+        document.getElementById('catPriority').value = '100';
+        document.getElementById('ruleType').value = 'keyword';
+        document.getElementById('ruleContent').value = '';
+        document.getElementById('catSortOrder').value = '0';
+        document.getElementById('catDesc').value = '';
+        if (id) {
+            const cat = currentCategories.find(c => c.id == id);
+            if (cat) {
+                document.getElementById('catId').value = cat.id;
+                document.getElementById('catName').value = cat.name;
+                document.getElementById('catParentId').value = cat.parent_id || '';
+                document.getElementById('catPriority').value = cat.priority;
+                document.getElementById('catSortOrder').value = cat.sort_order;
+                document.getElementById('catDesc').value = cat.description || '';
+                if (cat.keyword_rules) {
+                    try {
+                        const rules = JSON.parse(cat.keyword_rules);
+                        document.getElementById('ruleType').value = rules.type || 'keyword';
+                        document.getElementById('ruleContent').value = (rules.keywords || rules.patterns || []).join('\n');
+                    } catch(e) {}
+                }
+            }
+        }
+    }
+    function closeModal() { document.getElementById('editModal').style.display = 'none'; }
+    document.getElementById('categoryForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const ruleType = document.getElementById('ruleType').value;
+        const content = document.getElementById('ruleContent').value.split('\n').filter(l => l.trim());
+        const keywordRules = { type: ruleType };
+        if (ruleType === 'keyword') keywordRules.keywords = content;
+        else keywordRules.patterns = content;
+        const data = {
+            name: document.getElementById('catName').value,
+            parent_id: document.getElementById('catParentId').value ? parseInt(document.getElementById('catParentId').value) : null,
+            priority: parseInt(document.getElementById('catPriority').value),
+            keyword_rules: JSON.stringify(keywordRules),
+            sort_order: parseInt(document.getElementById('catSortOrder').value),
+            description: document.getElementById('catDesc').value
+        };
+        const id = document.getElementById('catId').value;
+        try {
+            if (id) await API.put(`/api/categories/${id}`, data);
+            else await API.post('/api/categories', data);
+            closeModal(); loadCategories();
+        } catch(e) { showMessage(e.message, 'error'); }
+    });
+    document.getElementById('addBtn').addEventListener('click', () => openModal());
+    loadCategories();
+</script>
+{{ end }}
