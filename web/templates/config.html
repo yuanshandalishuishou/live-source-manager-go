@@ -1,0 +1,59 @@
+{{ template "base.html" . }}
+{{ define "title" }}系统配置{{ end }}
+{{ define "content" }}
+<div class="card">
+    <div class="card-header">系统配置</div>
+    <form id="configForm">
+        <div id="configSections"></div>
+        <div class="flex" style="justify-content:flex-end; margin-top:20px;">
+            <button type="submit" class="btn btn-primary">保存配置</button>
+        </div>
+    </form>
+</div>
+<script>
+    async function loadConfig() {
+        try {
+            const data = await API.get('/api/config');
+            renderConfig(data.data);
+        } catch(e) { showMessage(e.message, 'error'); }
+    }
+    function renderConfig(config) {
+        const container = document.getElementById('configSections');
+        let html = '';
+        for (const [group, items] of Object.entries(config)) {
+            html += `<h3 style="margin:20px 0 10px; border-bottom:1px solid #eee; padding-bottom:5px;">${group}</h3>`;
+            for (const [key, meta] of Object.entries(items)) {
+                const value = meta.value;
+                const type = meta.type;
+                const desc = meta.description;
+                html += `<div class="form-group">`;
+                html += `<label title="${desc}">${key}</label>`;
+                if (type === 'bool') {
+                    html += `<select name="${group}.${key}" class="form-control"><option value="true" ${value==='true'?'selected':''}>是</option><option value="false" ${value==='false'?'selected':''}>否</option></select>`;
+                } else if (type === 'int' || type === 'number') {
+                    html += `<input type="number" name="${group}.${key}" value="${value}" class="form-control">`;
+                } else if (type === 'json') {
+                    html += `<textarea name="${group}.${key}" class="form-control" rows="3">${value}</textarea>`;
+                } else {
+                    html += `<input type="text" name="${group}.${key}" value="${value}" class="form-control">`;
+                }
+                html += `<small style="color:#888;">${desc}</small></div>`;
+            }
+        }
+        container.innerHTML = html;
+    }
+    document.getElementById('configForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const updates = {};
+        for (let [key, value] of formData.entries()) {
+            updates[key] = value;
+        }
+        try {
+            await API.post('/api/config', updates);
+            showMessage('配置已保存', 'success');
+        } catch(e) { showMessage(e.message, 'error'); }
+    });
+    loadConfig();
+</script>
+{{ end }}
