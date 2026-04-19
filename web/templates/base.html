@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Title }} - 直播源管理工具</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {{ block "head" . }}{{ end }}
+</head>
+<body>
+    <div class="app">
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <span class="logo">📡 直播源管理</span>
+            </div>
+            <div class="navbar-menu">
+                <span class="navbar-user">{{ .Username }}</span>
+                <a href="/logout" class="btn btn-outline btn-sm" id="logoutBtn">退出</a>
+            </div>
+        </nav>
+        <div class="main-container">
+            <aside class="sidebar">
+                <ul class="nav flex-column">
+                    <li class="nav-item"><a href="/" class="nav-link {{ if eq .Active "dashboard" }}active{{ end }}">📊 仪表盘</a></li>
+                    <li class="nav-item"><a href="/sources" class="nav-link {{ if eq .Active "sources" }}active{{ end }}">📺 源管理</a></li>
+                    <li class="nav-item"><a href="/subscriptions" class="nav-link {{ if eq .Active "subscriptions" }}active{{ end }}">🔗 订阅管理</a></li>
+                    <li class="nav-item"><a href="/categories" class="nav-link {{ if eq .Active "categories" }}active{{ end }}">🏷️ 分类管理</a></li>
+                    <li class="nav-item"><a href="/display-rules" class="nav-link {{ if eq .Active "display-rules" }}active{{ end }}">📋 显示规则</a></li>
+                    <li class="nav-item"><a href="/config" class="nav-link {{ if eq .Active "config" }}active{{ end }}">⚙️ 系统配置</a></li>
+                    <li class="nav-item"><a href="/logs" class="nav-link {{ if eq .Active "logs" }}active{{ end }}">📝 日志</a></li>
+                    <li class="nav-item"><a href="/preview" class="nav-link {{ if eq .Active "preview" }}active{{ end }}">👁️ 预览</a></li>
+                </ul>
+            </aside>
+            <main class="content">
+                {{ block "content" . }}{{ end }}
+            </main>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+    {{ block "scripts" . }}{{ end }}
+</body>
+</html>
