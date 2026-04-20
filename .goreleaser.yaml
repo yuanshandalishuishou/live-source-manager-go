@@ -1,0 +1,34 @@
+# .goreleaser.yaml
+project_name: live-source-manager
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: "default"
+    main: ./cmd/manager
+    binary: "{{ .ProjectName }}"
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - format: binary
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Os }}_
+      {{- .Arch }}_
+      {{- .Version }}
+      {{- if eq .Os "windows" }}.exe{{ end }}
+
+release:
+  draft: false
+  prerelease: auto
