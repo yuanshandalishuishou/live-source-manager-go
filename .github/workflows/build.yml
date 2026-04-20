@@ -1,0 +1,35 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main" ] # 当代码推送到 main 分支时触发
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取所有标签和完整历史
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Generate Version and Release
+        run: |
+          # 生成版本号，格式为 YYYYMMDD，例如 20260419
+          VERSION=$(date +'%Y%m%d')
+          echo "Building version: $VERSION"
+          # 创建一个轻量级标签
+          git tag $VERSION
+          
+          # 安装 GoReleaser
+          curl -sL https://git.io/goreleaser | sh
+          
+          # 运行 GoReleaser
+          ./bin/goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
