@@ -2,32 +2,37 @@ name: Build and Release
 
 on:
   push:
-    branches: [ "main" ] # 当代码推送到 main 分支时触发
+    branches: [ "main" ]
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 解决 Node.js 20 弃用警告
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 获取所有标签和完整历史
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Tidy modules
+        run: go mod tidy
 
       - name: Generate Version and Release
         run: |
-          # 生成版本号，格式为 YYYYMMDD，例如 20260419
           VERSION=$(date +'%Y%m%d')
           echo "Building version: $VERSION"
-          # 创建一个轻量级标签
-          git tag $VERSION
+          git tag $VERSION || true
           
           # 安装 GoReleaser
-          curl -sL https://git.io/goreleaser | sh
+          curl -sL https://git.io/goreleaser | bash
           
           # 运行 GoReleaser
           ./bin/goreleaser release --clean
