@@ -5,6 +5,8 @@ import (
 	"bufio"
 	"regexp"
 	"strings"
+	"database/sql"
+	"fmt"
 
 	"live-source-manager-go/internal/models"
 )
@@ -19,6 +21,22 @@ type ExtInfInfo struct {
 	UserAgent   string
 	Catchup     string
 	CatchupDays string
+}
+
+func toNullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+func toNullInt32(s string) sql.NullInt32 {
+	if s == "" {
+		return sql.NullInt32{}
+	}
+	var i int32
+	fmt.Sscanf(s, "%d", &i)
+	return sql.NullInt32{Int32: i, Valid: true}
 }
 
 // ParseM3U 解析 M3U 内容，返回原始源列表
