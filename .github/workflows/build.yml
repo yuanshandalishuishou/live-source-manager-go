@@ -4,16 +4,20 @@ on:
   push:
     branches: [ "main" ]
 
+permissions:
+  contents: write
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 解决 Node.js 20 弃用警告
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -25,16 +29,22 @@ jobs:
       - name: Tidy modules
         run: go mod tidy
 
+      - name: Commit go.sum if changed
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add go.mod go.sum
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update go.mod and go.sum [skip ci]"
+          git push
+
       - name: Generate Version and Release
         run: |
           VERSION=$(date +'%Y%m%d')
           echo "Building version: $VERSION"
           git tag $VERSION || true
           
-          # 安装 GoReleaser
           curl -sL https://git.io/goreleaser | bash
           
-          # 运行 GoReleaser
           ./bin/goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
