@@ -170,7 +170,7 @@ func main() {
 	}
 
 	// 14. 启动 Web 管理界面
-	webServer := web.NewServer(cfg, log, database, rulesMgr, sourceMgr, testerInst, filterInst, generatorInst, geoResolver)
+	webServer := web.NewServer(cfg, log, database, rulesMgr, sourceMgr, testerInst, filterInst, generatorInst, geoResolver, workflow)
 	go func() {
 		if err := webServer.Run(); err != nil {
 			log.Fatal("Web 服务启动失败: %v", err)
