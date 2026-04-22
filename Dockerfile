@@ -12,6 +12,9 @@ FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates tzdata ffmpeg nginx nginx-mod-rtmp
 RUN mkdir -p /var/www/hls /var/www/output /config /data /log
+RUN go run -exec "true" -ldflags="-s -w" -v . || true && \
+    mkdir -p /root/.nali && \
+    curl -L -o /root/.nali/qqwry.dat "https://raw.githubusercontent.com/wisdomfusion/qqwry.dat/master/20231122/qqwry.dat"
 
 COPY --from=builder /app/livesource-manager /usr/local/bin/
 COPY configs/ /config/
