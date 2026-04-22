@@ -2,17 +2,15 @@
 package web
 
 import (
+	"database/sql"
 	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
 	"os"
-	"path/filepath"
-	"time"
 
 	"live-source-manager-go/internal/config"
-	"live-source-manager-go/internal/db"
 	"live-source-manager-go/internal/filter"
 	"live-source-manager-go/internal/generator"
 	"live-source-manager-go/internal/geo"
@@ -41,12 +39,16 @@ type Server struct {
 	generator  *generator.Generator
 	geo        *geo.Resolver
 	wsUpgrader websocket.Upgrader
+
+	// 工作流触发器
+	workflowFunc func()
 }
 
 // NewServer 创建 Web 服务器实例
 func NewServer(cfg *config.Config, log *logger.Logger, db *sql.DB,
 	rulesMgr *rules.Manager, sourceMgr *source.Manager, testerInst *tester.Tester,
-	filterInst *filter.Filter, generatorInst *generator.Generator, geoResolver *geo.Resolver) *Server {
+	filterInst *filter.Filter, generatorInst *generator.Generator, geoResolver *geo.Resolver,
+	workflowFunc func()) *Server {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -55,16 +57,17 @@ func NewServer(cfg *config.Config, log *logger.Logger, db *sql.DB,
 	router.Use(requestLoggerMiddleware(log))
 
 	s := &Server{
-		cfg:        cfg,
-		log:        log,
-		router:     router,
-		db:         db,
-		rulesMgr:   rulesMgr,
-		sourceMgr:  sourceMgr,
-		tester:     testerInst,
-		filter:     filterInst,
-		generator:  generatorInst,
-		geo:        geoResolver,
+		cfg:          cfg,
+		log:          log,
+		router:       router,
+		db:           db,
+		rulesMgr:     rulesMgr,
+		sourceMgr:    sourceMgr,
+		tester:       testerInst,
+		filter:       filterInst,
+		generator:    generatorInst,
+		geo:          geoResolver,
+		workflowFunc: workflowFunc,
 		wsUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -74,14 +77,12 @@ func NewServer(cfg *config.Config, log *logger.Logger, db *sql.DB,
 	return s
 }
 
-// setupRoutes 配置路由
 func (s *Server) setupRoutes() {
-	// 静态文件和模板（优先使用外部目录，便于开发调试）
+	// 静态文件和模板
 	if _, err := os.Stat("./web/templates"); err == nil {
 		s.router.LoadHTMLGlob("./web/templates/*")
 		s.router.Static("/static", "./web/static")
 	} else {
-		// 使用嵌入资源
 		tmplFS, _ := fs.Sub(embeddedFS, "templates")
 		staticFS, _ := fs.Sub(embeddedFS, "static")
 		s.router.SetHTMLTemplate(template.Must(template.ParseFS(tmplFS, "*.html")))
@@ -109,7 +110,7 @@ func (s *Server) setupRoutes() {
 		api.PUT("/categories/:id", s.UpdateCategory)
 		api.DELETE("/categories/:id", s.DeleteCategory)
 		api.GET("/display-rules", s.ListDisplayRules)
-		api.POST("/display-rules", s.UpdateDisplayRules)
+		api.PUT("/display-rules", s.UpdateDisplayRules)
 		api.GET("/config", s.GetConfig)
 		api.POST("/config", s.SaveConfig)
 		api.GET("/logs", s.GetLogs)
