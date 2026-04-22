@@ -15,11 +15,3 @@ require (
     golang.org/x/net v0.17.0
     gopkg.in/yaml.v3 v3.0.1
 )
-# 获取最新版本的 nali 库
-go get github.com/zu1k/nali@latest
-
-# 清理未使用的依赖并更新 go.sum
-go mod tidy
-
-# 格式化代码
-go fmt ./...
