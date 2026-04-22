@@ -3,7 +3,6 @@ package utils
 import (
 	"net"
 	"net/url"
-	"strings"
 )
 
 // IsValidURL 检查字符串是否为有效的 HTTP/HTTPS URL。

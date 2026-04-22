@@ -3,7 +3,6 @@ package utils
 import (
 	"io"
 	"os"
-	"path/filepath"
 )
 
 // EnsureDir 确保目录存在，如果不存在则创建。

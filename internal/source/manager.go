@@ -23,12 +23,12 @@ import (
 
 // Manager 源管理器
 type Manager struct {
-	cfg         *config.Config
-	log         *logger.Logger
-	db          *sql.DB
-	rulesMgr    *rules.Manager
-	httpClient  *http.Client
-	onlineDir   string
+	cfg        *config.Config
+	log        *logger.Logger
+	db         *sql.DB
+	rulesMgr   *rules.Manager
+	httpClient *http.Client
+	onlineDir  string
 }
 
 // NewManager 创建源管理器

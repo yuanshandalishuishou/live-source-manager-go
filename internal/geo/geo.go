@@ -8,8 +8,9 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/zu1k/nali/pkg/qqwry"
 	"live-source-manager-go/pkg/logger"
+
+	"github.com/zu1k/nali/pkg/qqwry"
 )
 
 // Info 表示 IP 归属地信息

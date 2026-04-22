@@ -3,10 +3,10 @@ package source
 
 import (
 	"bufio"
-	"regexp"
-	"strings"
 	"database/sql"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"live-source-manager-go/internal/models"
 )

@@ -2,7 +2,6 @@ package web
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -141,14 +140,14 @@ func (s *Server) ListSources(c *gin.Context) {
 		var lastChecked sql.NullTime
 		rows.Scan(&id, &url, &name, &status, &resolution, &bitrate, &responseTime, &lastChecked)
 		sources = append(sources, map[string]interface{}{
-			"id":             id,
-			"url":            url.String,
-			"name":           name.String,
-			"status":         status.String,
-			"resolution":     resolution.String,
-			"bitrate":        bitrate.Int32,
-			"response_time":  responseTime.Int32,
-			"last_checked":   lastChecked.Time,
+			"id":            id,
+			"url":           url.String,
+			"name":          name.String,
+			"status":        status.String,
+			"resolution":    resolution.String,
+			"bitrate":       bitrate.Int32,
+			"response_time": responseTime.Int32,
+			"last_checked":  lastChecked.Time,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": sources, "page": page, "pageSize": pageSize})

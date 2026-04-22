@@ -3,7 +3,6 @@ package models
 
 import (
 	"database/sql"
-	"encoding/json"
 	"time"
 )
 
@@ -21,28 +20,28 @@ type SysConfig struct {
 
 // User 用户表
 type User struct {
-	ID           int64          `json:"id"`
-	Username     string         `json:"username"`
-	PasswordHash string         `json:"-"`
-	IsAdmin      bool           `json:"is_admin"`
-	CreatedAt    time.Time      `json:"created_at"`
-	LastLogin    sql.NullTime   `json:"last_login"`
-	IsActive     bool           `json:"is_active"`
+	ID           int64        `json:"id"`
+	Username     string       `json:"username"`
+	PasswordHash string       `json:"-"`
+	IsAdmin      bool         `json:"is_admin"`
+	CreatedAt    time.Time    `json:"created_at"`
+	LastLogin    sql.NullTime `json:"last_login"`
+	IsActive     bool         `json:"is_active"`
 }
 
 // LiveSource 直播源文件表
 type LiveSource struct {
-	ID             int64          `json:"id"`
-	Name           string         `json:"name"`
-	Location       string         `json:"location"`
-	LocationType   string         `json:"location_type"`
-	Enable         bool           `json:"enable"`
-	LastDownload   sql.NullTime   `json:"last_download"`
-	DownloadStatus string         `json:"download_status"`
-	HTTPStatus     sql.NullInt32  `json:"http_status"`
-	RetryCount     int            `json:"retry_count"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID             int64         `json:"id"`
+	Name           string        `json:"name"`
+	Location       string        `json:"location"`
+	LocationType   string        `json:"location_type"`
+	Enable         bool          `json:"enable"`
+	LastDownload   sql.NullTime  `json:"last_download"`
+	DownloadStatus string        `json:"download_status"`
+	HTTPStatus     sql.NullInt32 `json:"http_status"`
+	RetryCount     int           `json:"retry_count"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
 // URLSource 原始直播源条目表
@@ -93,38 +92,38 @@ type SourceCategory struct {
 
 // URLSourcePassed 验证通过的直播源表
 type URLSourcePassed struct {
-	ID             int64          `json:"id"`
-	URL            string         `json:"url"`
-	Name           string         `json:"name"`
-	TvgID          sql.NullString `json:"tvg_id"`
-	TvgLogo        sql.NullString `json:"tvg_logo"`
-	GroupTitle     sql.NullString `json:"group_title"`
-	Catchup        sql.NullString `json:"catchup"`
-	CatchupDays    sql.NullInt32  `json:"catchup_days"`
-	UserAgent      sql.NullString `json:"user_agent"`
-	SourceType     string         `json:"source_type"`
-	RawAttributes  sql.NullString `json:"raw_attributes"`
-	LiveSourceID   sql.NullInt64  `json:"live_source_id"`
-	EPGID          sql.NullString `json:"epg_id"`
-	EPGName        sql.NullString `json:"epg_name"`
-	EPGLogo        sql.NullString `json:"epg_logo"`
-	Status         string         `json:"status"` // active/inactive/unknown
-	ResponseTimeMs sql.NullInt32  `json:"response_time_ms"`
-	Resolution     sql.NullString `json:"resolution"`
-	Bitrate        sql.NullInt32  `json:"bitrate"`
-	VideoCodec     sql.NullString `json:"video_codec"`
-	AudioCodec     sql.NullString `json:"audio_codec"`
+	ID             int64           `json:"id"`
+	URL            string          `json:"url"`
+	Name           string          `json:"name"`
+	TvgID          sql.NullString  `json:"tvg_id"`
+	TvgLogo        sql.NullString  `json:"tvg_logo"`
+	GroupTitle     sql.NullString  `json:"group_title"`
+	Catchup        sql.NullString  `json:"catchup"`
+	CatchupDays    sql.NullInt32   `json:"catchup_days"`
+	UserAgent      sql.NullString  `json:"user_agent"`
+	SourceType     string          `json:"source_type"`
+	RawAttributes  sql.NullString  `json:"raw_attributes"`
+	LiveSourceID   sql.NullInt64   `json:"live_source_id"`
+	EPGID          sql.NullString  `json:"epg_id"`
+	EPGName        sql.NullString  `json:"epg_name"`
+	EPGLogo        sql.NullString  `json:"epg_logo"`
+	Status         string          `json:"status"` // active/inactive/unknown
+	ResponseTimeMs sql.NullInt32   `json:"response_time_ms"`
+	Resolution     sql.NullString  `json:"resolution"`
+	Bitrate        sql.NullInt32   `json:"bitrate"`
+	VideoCodec     sql.NullString  `json:"video_codec"`
+	AudioCodec     sql.NullString  `json:"audio_codec"`
 	FrameRate      sql.NullFloat64 `json:"frame_rate"`
 	DownloadSpeed  sql.NullFloat64 `json:"download_speed"`
-	LastChecked    sql.NullTime   `json:"last_checked"`
-	FailCount      int            `json:"fail_count"`
-	TestStatus     sql.NullString `json:"test_status"`
-	ErrorMessage   sql.NullString `json:"error_message"`
-	Location       sql.NullString `json:"location"`   // 归属地
-	ISP            sql.NullString `json:"isp"`        // 运营商
-	ExtraAttrs     sql.NullString `json:"extra_attrs"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	LastChecked    sql.NullTime    `json:"last_checked"`
+	FailCount      int             `json:"fail_count"`
+	TestStatus     sql.NullString  `json:"test_status"`
+	ErrorMessage   sql.NullString  `json:"error_message"`
+	Location       sql.NullString  `json:"location"` // 归属地
+	ISP            sql.NullString  `json:"isp"`      // 运营商
+	ExtraAttrs     sql.NullString  `json:"extra_attrs"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 // DisplayRule 显示规则表
@@ -165,15 +164,15 @@ type Blacklist struct {
 
 // RTMPStream RTMP推流管理表
 type RTMPStream struct {
-	ID            int64          `json:"id"`
-	SourceID      int64          `json:"source_id"`
-	StreamStatus  string         `json:"stream_status"` // stopped/pushing/error
-	PushURL       sql.NullString `json:"push_url"`
-	HLSURL        sql.NullString `json:"hls_url"`
-	LastPushTime  sql.NullTime   `json:"last_push_time"`
-	IdleSeconds   int            `json:"idle_seconds"`
-	ErrorMessage  sql.NullString `json:"error_message"`
-	CreatedAt     time.Time      `json:"created_at"`
+	ID           int64          `json:"id"`
+	SourceID     int64          `json:"source_id"`
+	StreamStatus string         `json:"stream_status"` // stopped/pushing/error
+	PushURL      sql.NullString `json:"push_url"`
+	HLSURL       sql.NullString `json:"hls_url"`
+	LastPushTime sql.NullTime   `json:"last_push_time"`
+	IdleSeconds  int            `json:"idle_seconds"`
+	ErrorMessage sql.NullString `json:"error_message"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 // TestProgress 测试进度表

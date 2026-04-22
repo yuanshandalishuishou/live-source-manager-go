@@ -13,21 +13,21 @@ import (
 
 // Config 聚合所有配置节
 type Config struct {
-	Sources   SourcesConfig
-	Network   NetworkConfig
+	Sources    SourcesConfig
+	Network    NetworkConfig
 	HTTPServer HTTPServerConfig
-	GitHub    GitHubConfig
-	Testing   TestingConfig
-	Output    OutputConfig
-	Logging   LoggingConfig
-	Filter    FilterConfig
-	EPG       EPGConfig
-	Logo      LogoConfig
-	Catchup   CatchupConfig
-	WebServer WebServerConfig
-	RTMP      RTMPConfig
-	Scan      ScanConfig
-	System    SystemConfig
+	GitHub     GitHubConfig
+	Testing    TestingConfig
+	Output     OutputConfig
+	Logging    LoggingConfig
+	Filter     FilterConfig
+	EPG        EPGConfig
+	Logo       LogoConfig
+	Catchup    CatchupConfig
+	WebServer  WebServerConfig
+	RTMP       RTMPConfig
+	Scan       ScanConfig
+	System     SystemConfig
 }
 
 // SourcesConfig 源文件配置
@@ -39,14 +39,14 @@ type SourcesConfig struct {
 
 // NetworkConfig 网络配置
 type NetworkConfig struct {
-	ProxyEnabled       bool
-	ProxyType          string
-	ProxyHost          string
-	ProxyPort          int
-	ProxyUsername      string
-	ProxyPassword      string
-	IPv6Enabled        bool
-	IPVersion          string
+	ProxyEnabled        bool
+	ProxyType           string
+	ProxyHost           string
+	ProxyPort           int
+	ProxyUsername       string
+	ProxyPassword       string
+	IPv6Enabled         bool
+	IPVersion           string
 	GitHubMirrorEnabled bool
 	GitHubMirrorURLs    []string
 }
@@ -138,17 +138,17 @@ type WebServerConfig struct {
 
 // RTMPConfig RTMP 推流配置
 type RTMPConfig struct {
-	OpenRTMP         bool
-	NginxHTTPPort    int
-	NginxRTMPPort    int
-	RTMPIdleTimeout  int
-	RTMPMaxStreams   int
+	OpenRTMP          bool
+	NginxHTTPPort     int
+	NginxRTMPPort     int
+	RTMPIdleTimeout   int
+	RTMPMaxStreams    int
 	RTMPTranscodeMode string
 }
 
 // ScanConfig 扫描配置
 type ScanConfig struct {
-	HotelIPRanges      []string
+	HotelIPRanges       []string
 	MulticastInterfaces []string
 }
 
@@ -366,17 +366,17 @@ func (c *Config) SaveToDB(db *sql.DB) error {
 	defer tx.Rollback()
 
 	updates := map[string]string{
-		"Network.proxy_enabled":           fmt.Sprintf("%v", c.Network.ProxyEnabled),
-		"Network.proxy_type":              c.Network.ProxyType,
-		"Network.ip_version":              c.Network.IPVersion,
-		"Testing.timeout":                 strconv.Itoa(c.Testing.Timeout),
-		"Testing.concurrent_threads":      strconv.Itoa(c.Testing.ConcurrentThreads),
-		"Output.filename":                 c.Output.Filename,
-		"Output.max_sources_per_channel":  strconv.Itoa(c.Output.MaxSourcesPerChannel),
-		"Filter.max_latency":              strconv.Itoa(c.Filter.MaxLatency),
-		"RTMP.open_rtmp":                  fmt.Sprintf("%v", c.RTMP.OpenRTMP),
-		"WebServer.port":                  strconv.Itoa(c.WebServer.Port),
-		"System.cron_expression":          c.System.CronExpression,
+		"Network.proxy_enabled":          fmt.Sprintf("%v", c.Network.ProxyEnabled),
+		"Network.proxy_type":             c.Network.ProxyType,
+		"Network.ip_version":             c.Network.IPVersion,
+		"Testing.timeout":                strconv.Itoa(c.Testing.Timeout),
+		"Testing.concurrent_threads":     strconv.Itoa(c.Testing.ConcurrentThreads),
+		"Output.filename":                c.Output.Filename,
+		"Output.max_sources_per_channel": strconv.Itoa(c.Output.MaxSourcesPerChannel),
+		"Filter.max_latency":             strconv.Itoa(c.Filter.MaxLatency),
+		"RTMP.open_rtmp":                 fmt.Sprintf("%v", c.RTMP.OpenRTMP),
+		"WebServer.port":                 strconv.Itoa(c.WebServer.Port),
+		"System.cron_expression":         c.System.CronExpression,
 	}
 
 	for key, value := range updates {

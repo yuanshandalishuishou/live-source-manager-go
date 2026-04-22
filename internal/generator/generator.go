@@ -20,9 +20,9 @@ import (
 
 // Generator M3U/TXT 生成器
 type Generator struct {
-	cfg    *config.Config
-	log    *logger.Logger
-	db     *sql.DB
+	cfg *config.Config
+	log *logger.Logger
+	db  *sql.DB
 }
 
 // NewGenerator 创建生成器实例
