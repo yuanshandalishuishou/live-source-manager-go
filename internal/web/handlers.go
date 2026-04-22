@@ -710,3 +710,17 @@ func (s *Server) scanMulticastAddress(iface, address string) int {
 	}
 	return 1
 }
+
+// HealthCheck 健康检查
+func (s *Server) HealthCheck(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
+}
+
+// ReadyCheck 就绪检查（检查数据库连接等）
+func (s *Server) ReadyCheck(c *gin.Context) {
+	if err := s.db.Ping(); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ready"})
+}
