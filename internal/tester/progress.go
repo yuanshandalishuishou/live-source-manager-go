@@ -157,11 +157,16 @@ func (pm *ProgressManager) broadcastLoop() {
 	for data := range pm.broadcastCh {
 		pm.clientsMu.RLock()
 		for conn := range pm.clients {
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				pm.log.Debug("WebSocket 发送失败: %v", err)
-				conn.Close()
-				delete(pm.clients, conn)
-			}
+			go func(c *websocket.Conn) {
+				c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := c.WriteMessage(websocket.TextMessage, data); err != nil {
+					pm.log.Debug("WebSocket 发送失败: %v", err)
+					c.Close()
+					pm.clientsMu.Lock()
+					delete(pm.clients, c)
+					pm.clientsMu.Unlock()
+				}
+			}(conn)
 		}
 		pm.clientsMu.RUnlock()
 	}
