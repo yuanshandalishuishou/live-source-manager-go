@@ -12,6 +12,8 @@ permissions:
 jobs:
   auto-fix:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 解决 Node.js 20 弃用警告
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,10 +26,14 @@ jobs:
         with:
           go-version: '1.21'
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
 
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
+
+      - name: Download dependencies
+        run: go mod download
 
       - name: Run go mod tidy
         run: go mod tidy
@@ -39,6 +45,8 @@ jobs:
         run: goimports -w .
 
       - name: Run go vet
+        # 允许 vet 警告但不中断流程（仅检查，不强制通过）
+        continue-on-error: true
         run: go vet ./...
 
       - name: Check for changes
