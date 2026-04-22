@@ -39,14 +39,14 @@ type SourcesConfig struct {
 
 // NetworkConfig 网络配置
 type NetworkConfig struct {
-	ProxyEnabled   bool
-	ProxyType      string
-	ProxyHost      string
-	ProxyPort      int
-	ProxyUsername  string
-	ProxyPassword  string
-	IPv6Enabled    bool
-	IPVersion      string // ipv4/ipv6/all
+	ProxyEnabled       bool
+	ProxyType          string
+	ProxyHost          string
+	ProxyPort          int
+	ProxyUsername      string
+	ProxyPassword      string
+	IPv6Enabled        bool
+	IPVersion          string
 	GitHubMirrorEnabled bool
 	GitHubMirrorURLs    []string
 }
@@ -68,12 +68,12 @@ type GitHubConfig struct {
 
 // TestingConfig 测试参数配置
 type TestingConfig struct {
-	Timeout            int
-	ConcurrentThreads  int
-	CacheTTL           int
-	EnableSpeedTest    bool
-	SpeedTestDuration  int
-	MaxRetries         int
+	Timeout           int
+	ConcurrentThreads int
+	CacheTTL          int
+	EnableSpeedTest   bool
+	SpeedTestDuration int
+	MaxRetries        int
 }
 
 // OutputConfig 输出配置
@@ -96,17 +96,17 @@ type LoggingConfig struct {
 
 // FilterConfig 过滤配置
 type FilterConfig struct {
-	MaxLatency            int
-	MinBitrate            int
-	MustHD                bool
-	Must4K                bool
-	MinSpeed              int
-	MinResolution         string
-	MaxResolution         string
-	ResolutionFilterMode  string
-	Location              string   // 归属地过滤，逗号分隔
-	ISP                   string   // 运营商过滤，逗号分隔
-	OriginTypePrefer      []string // 接口来源偏好排序
+	MaxLatency           int
+	MinBitrate           int
+	MustHD               bool
+	Must4K               bool
+	MinSpeed             int
+	MinResolution        string
+	MaxResolution        string
+	ResolutionFilterMode string
+	Location             string
+	ISP                  string
+	OriginTypePrefer     []string
 }
 
 // EPGConfig EPG 配置
@@ -114,7 +114,7 @@ type EPGConfig struct {
 	UpdateInterval int
 	IncludeEPGURL  bool
 	EPGURL         string
-	EPGSources     []string // JSON 格式，运行时解析
+	EPGSources     []string
 }
 
 // LogoConfig 台标配置
@@ -148,8 +148,8 @@ type RTMPConfig struct {
 
 // ScanConfig 扫描配置
 type ScanConfig struct {
-	HotelIPRanges      []string // JSON
-	MulticastInterfaces []string // JSON
+	HotelIPRanges      []string
+	MulticastInterfaces []string
 }
 
 // SystemConfig 系统配置
@@ -279,23 +279,118 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
-// LoadFromDB 从数据库 sys_config 表加载配置，并合并覆盖文件配置
+// LoadFromDB 从数据库加载配置并覆盖当前结构体
 func (c *Config) LoadFromDB(db *sql.DB) error {
-	rows, err := db.Query(`SELECT group_name, key, value, value_type FROM sys_config`)
+	rows, err := db.Query(`SELECT group_name, key, value FROM sys_config`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var group, key, value, valueType string
-		if err := rows.Scan(&group, &key, &value, &valueType); err != nil {
+		var group, key, value string
+		if err := rows.Scan(&group, &key, &value); err != nil {
 			continue
 		}
-		// 这里可以根据 group 和 key 动态设置结构体字段，简化起见，可反射实现，此处略
-		// 实际项目中建议使用反射或预先定义映射
+		switch group {
+		case "Network":
+			switch key {
+			case "proxy_enabled":
+				c.Network.ProxyEnabled = value == "true"
+			case "proxy_type":
+				c.Network.ProxyType = value
+			case "proxy_host":
+				c.Network.ProxyHost = value
+			case "proxy_port":
+				c.Network.ProxyPort, _ = strconv.Atoi(value)
+			case "ip_version":
+				c.Network.IPVersion = value
+			}
+		case "Testing":
+			switch key {
+			case "timeout":
+				c.Testing.Timeout, _ = strconv.Atoi(value)
+			case "concurrent_threads":
+				c.Testing.ConcurrentThreads, _ = strconv.Atoi(value)
+			case "enable_speed_test":
+				c.Testing.EnableSpeedTest = value == "true"
+			}
+		case "Output":
+			switch key {
+			case "filename":
+				c.Output.Filename = value
+			case "group_by":
+				c.Output.GroupBy = value
+			case "max_sources_per_channel":
+				c.Output.MaxSourcesPerChannel, _ = strconv.Atoi(value)
+			}
+		case "Filter":
+			switch key {
+			case "max_latency":
+				c.Filter.MaxLatency, _ = strconv.Atoi(value)
+			case "min_bitrate":
+				c.Filter.MinBitrate, _ = strconv.Atoi(value)
+			case "location":
+				c.Filter.Location = value
+			case "isp":
+				c.Filter.ISP = value
+			}
+		case "RTMP":
+			switch key {
+			case "open_rtmp":
+				c.RTMP.OpenRTMP = value == "true"
+			case "rtmp_max_streams":
+				c.RTMP.RTMPMaxStreams, _ = strconv.Atoi(value)
+			}
+		case "WebServer":
+			switch key {
+			case "port":
+				c.WebServer.Port, _ = strconv.Atoi(value)
+			}
+		case "System":
+			switch key {
+			case "cron_expression":
+				c.System.CronExpression = value
+			}
+		}
 	}
 	return nil
+}
+
+// SaveToDB 将当前配置保存到数据库
+func (c *Config) SaveToDB(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	updates := map[string]string{
+		"Network.proxy_enabled":           fmt.Sprintf("%v", c.Network.ProxyEnabled),
+		"Network.proxy_type":              c.Network.ProxyType,
+		"Network.ip_version":              c.Network.IPVersion,
+		"Testing.timeout":                 strconv.Itoa(c.Testing.Timeout),
+		"Testing.concurrent_threads":      strconv.Itoa(c.Testing.ConcurrentThreads),
+		"Output.filename":                 c.Output.Filename,
+		"Output.max_sources_per_channel":  strconv.Itoa(c.Output.MaxSourcesPerChannel),
+		"Filter.max_latency":              strconv.Itoa(c.Filter.MaxLatency),
+		"RTMP.open_rtmp":                  fmt.Sprintf("%v", c.RTMP.OpenRTMP),
+		"WebServer.port":                  strconv.Itoa(c.WebServer.Port),
+		"System.cron_expression":          c.System.CronExpression,
+	}
+
+	for key, value := range updates {
+		parts := strings.SplitN(key, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		group, k := parts[0], parts[1]
+		_, err := tx.Exec(`UPDATE sys_config SET value = ? WHERE group_name = ? AND key = ?`, value, group, k)
+		if err != nil {
+			_, _ = tx.Exec(`INSERT INTO sys_config (group_name, key, value) VALUES (?, ?, ?)`, group, k, value)
+		}
+	}
+	return tx.Commit()
 }
 
 // GetLogLevel 返回日志级别常量
@@ -314,7 +409,6 @@ func (c *LoggingConfig) GetLogLevel() int {
 	}
 }
 
-// 辅助函数
 func parseMultiline(s string) []string {
 	lines := strings.Split(s, "\n")
 	var result []string
@@ -340,10 +434,4 @@ func splitTrim(s, sep string) []string {
 		}
 	}
 	return result
-}
-
-// SaveToDB 将当前配置保存到数据库（用于 Web 保存）
-func (c *Config) SaveToDB(db *sql.DB) error {
-	// 实现略，可使用事务批量更新或插入
-	return nil
 }
