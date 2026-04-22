@@ -92,6 +92,8 @@ func (s *Server) setupRoutes() {
 	// 公开路由
 	s.router.GET("/login", s.LoginPage)
 	s.router.POST("/api/login", s.Login)
+	s.router.GET("/health", s.HealthCheck)
+	s.router.GET("/ready", s.ReadyCheck)
 
 	// API 路由组（需认证）
 	api := s.router.Group("/api")
