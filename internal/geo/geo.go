@@ -1,26 +1,16 @@
 // Package geo 提供基于纯真 IP 数据库的 IP 归属地和运营商查询功能。
-// 用于在测试流媒体源时，解析源服务器 IP 的地理位置和运营商信息，
-// 以便在生成播放列表时优先选择同城或同运营商的源，提升播放体验。
+// 使用 github.com/zu1k/nali 库，自动下载并更新数据库文件。
 package geo
 
 import (
-	"embed"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/zu1k/nali/pkg/qqwry"
 	"live-source-manager-go/pkg/logger"
 )
-
-//go:embed qqwry.dat
-var qqwryData embed.FS
-
-const qqwryFileName = "qqwry.dat"
 
 // Info 表示 IP 归属地信息
 type Info struct {
@@ -34,59 +24,26 @@ type Info struct {
 
 // Resolver IP 归属地解析器
 type Resolver struct {
-	log    *logger.Logger
-	db     *qqwry.QQwry
-	dbPath string
-	mu     sync.RWMutex
+	log *logger.Logger
+	db  *qqwry.QQwry
+	mu  sync.RWMutex
 }
 
 // NewResolver 创建归属地解析器实例。
-// dataDir 为数据文件存放目录，若文件不存在则从嵌入的资源中释放。
+// 使用 nali/qqwry 库，它会自动下载并更新 IP 数据库到本地缓存目录。
+// dataDir 参数保留以兼容现有调用，实际不再需要手动管理文件路径。
 func NewResolver(dataDir string, log *logger.Logger) (*Resolver, error) {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("创建数据目录失败: %w", err)
-	}
-
-	dbPath := filepath.Join(dataDir, qqwryFileName)
-
-	// 如果数据库文件不存在，从嵌入资源释放
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		if err := extractEmbeddedDB(dbPath); err != nil {
-			return nil, fmt.Errorf("释放 IP 数据库失败: %w", err)
-		}
-		log.Info("IP 数据库已释放到 %s", dbPath)
-	}
-
-	// 加载纯真数据库
-	db, err := qqwry.NewQQwry(dbPath)
+	// NewQQwry 会自动检查本地缓存，若文件不存在或过期则自动下载
+	db, err := qqwry.NewQQwry()
 	if err != nil {
-		return nil, fmt.Errorf("加载 IP 数据库失败: %w", err)
+		return nil, fmt.Errorf("初始化 IP 数据库失败: %w", err)
 	}
 
-	log.Info("IP 归属地解析器初始化成功，数据文件: %s", dbPath)
+	log.Info("IP 归属地解析器初始化成功（使用 nali 自动下载）")
 	return &Resolver{
-		log:    log,
-		db:     db,
-		dbPath: dbPath,
+		log: log,
+		db:  db,
 	}, nil
-}
-
-// extractEmbeddedDB 从嵌入的文件系统中提取 qqwry.dat 到目标路径
-func extractEmbeddedDB(dstPath string) error {
-	srcFile, err := qqwryData.Open(qqwryFileName)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	dstFile, err := os.Create(dstPath)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	_, err = io.Copy(dstFile, srcFile)
-	return err
 }
 
 // Resolve 解析 IP 地址的归属地信息
@@ -101,7 +58,7 @@ func (r *Resolver) Resolve(ipStr string) (*Info, error) {
 
 	result, err := r.db.Find(ipStr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("查询 IP 归属地失败: %w", err)
 	}
 
 	info := &Info{
@@ -170,20 +127,20 @@ func (r *Resolver) GetISP(rawURL string) string {
 	return info.ISP
 }
 
-// Close 关闭解析器，释放资源
+// Close 关闭解析器，释放资源（nali 库无需显式关闭）
 func (r *Resolver) Close() error {
-	// qqwry 库不需要显式关闭
 	return nil
 }
 
-// Reload 重新加载数据库（例如更新了 qqwry.dat 文件后）
+// Reload 重新加载数据库（强制更新）
 func (r *Resolver) Reload() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	newDB, err := qqwry.NewQQwry(r.dbPath)
+	// 使用 Download 方法强制重新下载最新数据库
+	newDB, err := qqwry.Download()
 	if err != nil {
-		return fmt.Errorf("重新加载 IP 数据库失败: %w", err)
+		return fmt.Errorf("下载 IP 数据库失败: %w", err)
 	}
 	r.db = newDB
 	r.log.Info("IP 数据库已重新加载")
