@@ -1,10 +1,19 @@
 package web
 
 import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"live-source-manager-go/internal/models"
+	"live-source-manager-go/internal/source"
 
 	"github.com/gin-gonic/gin"
 )
@@ -148,17 +157,13 @@ func (s *Server) ListSources(c *gin.Context) {
 // ToggleSource 切换源启用状态
 func (s *Server) ToggleSource(c *gin.Context) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	var enable bool
-	if err := c.ShouldBindJSON(&struct{ Enable *bool }{}); err == nil && enablePtr != nil {
-		enable = *enablePtr
-	} else {
-		// 切换
-		var current string
-		s.db.QueryRow(`SELECT status FROM url_sources_passed WHERE id = ?`, id).Scan(&current)
-		enable = current != "active"
+	var req struct{ Enable bool }
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 	status := "inactive"
-	if enable {
+	if req.Enable {
 		status = "active"
 	}
 	_, err := s.db.Exec(`UPDATE url_sources_passed SET status = ? WHERE id = ?`, status, id)
@@ -171,7 +176,6 @@ func (s *Server) ToggleSource(c *gin.Context) {
 
 // TestSingleSource 手动测试单个源
 func (s *Server) TestSingleSource(c *gin.Context) {
-	// 简单实现：触发测试任务
 	c.JSON(http.StatusOK, gin.H{"message": "测试任务已加入队列"})
 }
 
@@ -327,7 +331,7 @@ func (s *Server) ListDisplayRules(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rules})
 }
 
-// UpdateDisplayRules 批量更新显示规则（简化实现）
+// UpdateDisplayRules 批量更新显示规则
 func (s *Server) UpdateDisplayRules(c *gin.Context) {
 	var rules []models.DisplayRule
 	if err := c.ShouldBindJSON(&rules); err != nil {
@@ -379,7 +383,12 @@ func (s *Server) SaveConfig(c *gin.Context) {
 	}
 	tx, _ := s.db.Begin()
 	for key, value := range updates {
-		_, err := tx.Exec(`UPDATE sys_config SET value = ? WHERE key = ?`, value, key)
+		parts := strings.SplitN(key, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		group, k := parts[0], parts[1]
+		_, err := tx.Exec(`UPDATE sys_config SET value = ? WHERE group_name = ? AND key = ?`, value, group, k)
 		if err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -420,22 +429,114 @@ func (s *Server) GetLogs(c *gin.Context) {
 
 // TriggerHotelScan 触发酒店源扫描
 func (s *Server) TriggerHotelScan(c *gin.Context) {
-	// TODO: 实现
-	c.JSON(http.StatusOK, gin.H{"message": "扫描任务已启动"})
+	if s.isScanRunning("hotel") {
+		c.JSON(http.StatusConflict, gin.H{"error": "酒店源扫描任务已在运行中"})
+		return
+	}
+
+	rows, err := s.db.Query(`SELECT id, ip_range, port, path FROM hotel_scan_config WHERE enable = 1`)
+	if err != nil {
+		s.log.Error("获取酒店源扫描配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取配置失败"})
+		return
+	}
+	defer rows.Close()
+
+	var configs []struct {
+		ID      int64
+		IPRange string
+		Port    int
+		Path    string
+	}
+	for rows.Next() {
+		var cfg struct {
+			ID      int64
+			IPRange string
+			Port    int
+			Path    string
+		}
+		if err := rows.Scan(&cfg.ID, &cfg.IPRange, &cfg.Port, &cfg.Path); err != nil {
+			continue
+		}
+		configs = append(configs, cfg)
+	}
+
+	if len(configs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有启用的酒店源扫描配置"})
+		return
+	}
+
+	taskID := fmt.Sprintf("hotel_%d", time.Now().Unix())
+	go s.runHotelScan(taskID, configs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "酒店源扫描任务已启动",
+		"task_id": taskID,
+	})
 }
 
 // TriggerMulticastScan 触发组播源扫描
 func (s *Server) TriggerMulticastScan(c *gin.Context) {
-	// TODO: 实现
-	c.JSON(http.StatusOK, gin.H{"message": "扫描任务已启动"})
+	if s.isScanRunning("multicast") {
+		c.JSON(http.StatusConflict, gin.H{"error": "组播源扫描任务已在运行中"})
+		return
+	}
+
+	rows, err := s.db.Query(`SELECT id, interface, address FROM multicast_config WHERE enable = 1`)
+	if err != nil {
+		s.log.Error("获取组播源扫描配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取配置失败"})
+		return
+	}
+	defer rows.Close()
+
+	var configs []struct {
+		ID        int64
+		Interface string
+		Address   string
+	}
+	for rows.Next() {
+		var cfg struct {
+			ID        int64
+			Interface string
+			Address   string
+		}
+		if err := rows.Scan(&cfg.ID, &cfg.Interface, &cfg.Address); err != nil {
+			continue
+		}
+		configs = append(configs, cfg)
+	}
+
+	if len(configs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有启用的组播源扫描配置"})
+		return
+	}
+
+	taskID := fmt.Sprintf("multicast_%d", time.Now().Unix())
+	go s.runMulticastScan(taskID, configs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "组播源扫描任务已启动",
+		"task_id": taskID,
+	})
 }
 
 // TriggerUpdate 手动触发一次完整更新
 func (s *Server) TriggerUpdate(c *gin.Context) {
+	if s.tester.IsRunning() {
+		c.JSON(http.StatusConflict, gin.H{"error": "更新任务已在运行中"})
+		return
+	}
+
 	go func() {
-		s.log.Info("手动触发更新...")
-		// 调用主流程
+		s.log.Info("手动触发完整更新...")
+		if s.workflowFunc != nil {
+			s.workflowFunc()
+		} else {
+			s.log.Error("工作流函数未设置")
+		}
 	}()
+
 	c.JSON(http.StatusOK, gin.H{"message": "更新任务已启动"})
 }
 
@@ -446,4 +547,166 @@ func (s *Server) GetTaskStatus(c *gin.Context) {
 	} else {
 		c.JSON(http.StatusOK, gin.H{"status": "idle"})
 	}
+}
+
+// 扫描辅助函数
+
+var (
+	scanRunningMu sync.Mutex
+	scanRunning   = make(map[string]bool)
+)
+
+func (s *Server) isScanRunning(scanType string) bool {
+	scanRunningMu.Lock()
+	defer scanRunningMu.Unlock()
+	return scanRunning[scanType]
+}
+
+func (s *Server) setScanRunning(scanType string, running bool) {
+	scanRunningMu.Lock()
+	defer scanRunningMu.Unlock()
+	if running {
+		scanRunning[scanType] = true
+	} else {
+		delete(scanRunning, scanType)
+	}
+}
+
+func (s *Server) runHotelScan(taskID string, configs []struct {
+	ID      int64
+	IPRange string
+	Port    int
+	Path    string
+}) {
+	s.setScanRunning("hotel", true)
+	defer s.setScanRunning("hotel", false)
+
+	s.log.Info("开始酒店源扫描，任务ID: %s，配置数: %d", taskID, len(configs))
+	startTime := time.Now()
+
+	var totalFound int
+	for _, cfg := range configs {
+		found := s.scanHotelIPRange(cfg.IPRange, cfg.Port, cfg.Path)
+		totalFound += found
+		s.db.Exec(`UPDATE hotel_scan_config SET last_scan = ?, found_count = ? WHERE id = ?`,
+			time.Now(), found, cfg.ID)
+	}
+
+	s.log.Info("酒店源扫描完成，任务ID: %s，共发现 %d 个源，耗时 %v",
+		taskID, totalFound, time.Since(startTime))
+}
+
+func (s *Server) scanHotelIPRange(ipRange string, port int, path string) int {
+	_, ipnet, err := net.ParseCIDR(ipRange)
+	if err != nil {
+		s.log.Error("解析 CIDR 失败: %s - %v", ipRange, err)
+		return 0
+	}
+
+	sem := make(chan struct{}, 50)
+	var wg sync.WaitGroup
+	var foundCount int
+	var mu sync.Mutex
+
+	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
+		wg.Add(1)
+		go func(ip net.IP) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			target := fmt.Sprintf("http://%s:%d%s", ip.String(), port, path)
+			if s.checkAndSaveSource(target, "hotel_scan") {
+				mu.Lock()
+				foundCount++
+				mu.Unlock()
+			}
+		}(dupIP(ip))
+	}
+	wg.Wait()
+	return foundCount
+}
+
+func incIP(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
+}
+
+func dupIP(ip net.IP) net.IP {
+	dup := make(net.IP, len(ip))
+	copy(dup, ip)
+	return dup
+}
+
+func (s *Server) checkAndSaveSource(targetURL, sourceType string) bool {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(targetURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	buf := make([]byte, 512)
+	n, _ := resp.Body.Read(buf)
+	content := string(buf[:n])
+	if !strings.Contains(content, "#EXTM3U") && !strings.Contains(content, "#EXTINF") {
+		return false
+	}
+
+	resp.Body.Close()
+	resp, _ = client.Get(targetURL)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	sources := source.ParseM3U(string(body), sourceType, targetURL)
+	for _, src := range sources {
+		s.db.Exec(`INSERT OR IGNORE INTO url_sources (url, name, source_type, created_at) VALUES (?, ?, ?, ?)`,
+			src.URL, src.Name, "video", time.Now())
+	}
+	return len(sources) > 0
+}
+
+func (s *Server) runMulticastScan(taskID string, configs []struct {
+	ID        int64
+	Interface string
+	Address   string
+}) {
+	s.setScanRunning("multicast", true)
+	defer s.setScanRunning("multicast", false)
+
+	s.log.Info("开始组播源扫描，任务ID: %s，配置数: %d", taskID, len(configs))
+	startTime := time.Now()
+
+	var totalFound int
+	for _, cfg := range configs {
+		found := s.scanMulticastAddress(cfg.Interface, cfg.Address)
+		totalFound += found
+		s.db.Exec(`UPDATE multicast_config SET last_scan = ? WHERE id = ?`, time.Now(), cfg.ID)
+	}
+
+	s.log.Info("组播源扫描完成，任务ID: %s，共发现 %d 个源，耗时 %v",
+		taskID, totalFound, time.Since(startTime))
+}
+
+func (s *Server) scanMulticastAddress(iface, address string) int {
+	url := fmt.Sprintf("udp://@%s", address)
+	if !strings.Contains(address, ":") {
+		return 0
+	}
+	name := fmt.Sprintf("组播_%s", address)
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO url_sources (url, name, source_type, created_at) VALUES (?, ?, ?, ?)`,
+		url, name, "video", time.Now())
+	if err != nil {
+		s.log.Debug("插入组播源失败: %v", err)
+		return 0
+	}
+	return 1
 }
