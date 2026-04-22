@@ -1,5 +1,7 @@
 # Live Source Manager (Go 版)
 
+https://zread.ai/yuanshandalishuishou/live-source-manager-go
+
 **Live Source Manager** 是一个用 Go 语言编写的高性能 IPTV 直播源自动聚合、测速、筛选与管理工具。它可以自动从订阅源、本地文件中拉取直播源，通过 ffprobe 检测可用性与质量，智能分类、去重，最终生成高质量的 M3U/TXT 播放列表。同时内置 Web 管理界面，支持可视化管理源、订阅、分类、配置和日志。
 
 > 本项目参考了 [Guovin/iptv-api](https://github.com/Guovin/iptv-api) 的优秀设计，并在此基础上增加了 Web 管理界面、SQLite 持久化、用户认证等功能，采用 Go 语言实现，具有更低的资源占用和更简单的部署方式。
