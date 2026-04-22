@@ -1,3 +1,4 @@
+// internal/tester/tester.go
 package tester
 
 import (
@@ -65,6 +66,9 @@ func (t *Tester) Start() (string, error) {
 
 	go func() {
 		defer func() {
+			if r := recover(); r != nil {
+				t.log.Error("测试任务 panic: %v", r)
+			}
 			t.mu.Lock()
 			t.running = false
 			t.mu.Unlock()
@@ -113,12 +117,14 @@ func (t *Tester) runTests() {
 
 // fetchPendingSources 获取待测试的源
 func (t *Tester) fetchPendingSources() ([]models.URLSource, error) {
-	rows, err := t.db.Query(`SELECT id, url, name, tvg_id, tvg_logo, group_title, 
+	// 修复 SQL：将 updated_at 改为 created_at
+	query := `SELECT id, url, name, tvg_id, tvg_logo, group_title, 
 		catchup, catchup_days, user_agent, raw_attributes, source_type, live_source_id
 		FROM url_sources WHERE id NOT IN (SELECT source_id FROM url_sources_passed) 
-		OR id IN (SELECT id FROM url_sources WHERE updated_at < datetime('now', '-1 day'))`)
+		OR id IN (SELECT id FROM url_sources WHERE created_at < datetime('now', '-1 day'))`
+	rows, err := t.db.Query(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("查询待测源失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -306,7 +312,7 @@ func (t *Tester) savePassedSource(src models.URLSource, result FFProbeResult, lo
 		"active", result.ResponseTime, result.Resolution, result.Bitrate, result.VideoCodec, result.AudioCodec,
 		result.FrameRate, time.Now(), result.Status, location, isp, "{}")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("插入 url_sources_passed 失败: %w", err)
 	}
 	id, _ := res.LastInsertId()
 
@@ -322,7 +328,7 @@ func (t *Tester) savePassedSource(src models.URLSource, result FFProbeResult, lo
 }
 
 func (t *Tester) recordFailure(src models.URLSource, reason string, result *FFProbeResult) {
-	t.db.Exec(`UPDATE url_sources SET updated_at = ? WHERE id = ?`, time.Now(), src.ID)
+	t.db.Exec(`UPDATE url_sources SET created_at = ? WHERE id = ?`, time.Now(), src.ID)
 	// 可扩展记录到 test_history
 }
 
