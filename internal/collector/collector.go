@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"video-source-manager/internal/config"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
 )
 
 // CollectFromURL 下载网络文件并解析存入 url_sources
