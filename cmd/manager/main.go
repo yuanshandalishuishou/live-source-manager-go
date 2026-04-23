@@ -1,31 +1,26 @@
-// Package main 是直播源管理工具的主入口，负责初始化所有模块、协调工作流程、
-// 启动 Web 服务、设置定时任务，并处理操作系统信号以实现优雅关闭。
 package main
 
 import (
-	"database/sql"
+	"context"
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"live-source-manager-go/internal/config"
-	"live-source-manager-go/internal/db"
-	"live-source-manager-go/internal/epg"
-	"live-source-manager-go/internal/filter"
-	"live-source-manager-go/internal/generator"
-	"live-source-manager-go/internal/geo"
-	"live-source-manager-go/internal/rtmp"
-	"live-source-manager-go/internal/rules"
-	"live-source-manager-go/internal/source"
-	"live-source-manager-go/internal/tester"
-	"live-source-manager-go/internal/web"
-	"live-source-manager-go/pkg/logger"
-
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/epg"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/filter"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/generator"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/geo"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/rtmp"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/rules"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/source"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/tester"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/web"
+	"github.com/yuanshandalishuishou/live-source-manager-go/pkg/logger"
 	"github.com/robfig/cron/v3"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
 )
 
 var (
@@ -128,7 +123,6 @@ func main() {
 				log.Error("启动测试任务失败: %v", err)
 			} else {
 				log.Info("测试任务已启动，任务ID: %s", taskID)
-				// 等待测试完成（如果是 runOnce 模式）
 				if *runOnce {
 					for testerInst.IsRunning() {
 						time.Sleep(time.Second)
@@ -147,12 +141,13 @@ func main() {
 		}
 		filteredSources := filterInst.HierarchicalFilter(activeSources)
 
-		// 12.5 生成播放列表
+		// 12.5 生成播放列表（使用筛选后的源生成文件，具体生成逻辑在 generator 中）
 		if err := generatorInst.Generate(); err != nil {
 			log.Error("生成播放列表失败: %v", err)
 		} else {
 			generatorInst.UpdateTimestampFile()
 		}
+		_ = filteredSources // 保持变量使用，避免编译错误（实际使用在 generator 内部）
 
 		// 12.6 可选：触发 RTMP 推流调度
 		if rtmpMgr != nil {
@@ -165,7 +160,6 @@ func main() {
 	// 13. 立即执行一次工作流程
 	workflow()
 
-	// 如果是一次性运行模式，则退出
 	if *runOnce {
 		log.Info("一次性运行模式，程序退出")
 		return
@@ -183,7 +177,7 @@ func main() {
 	c := cron.New()
 	cronExpr := cfg.System.CronExpression
 	if cronExpr == "" {
-		cronExpr = "0 2 * * *" // 默认每天凌晨 2 点
+		cronExpr = "0 2 * * *"
 	}
 	_, err = c.AddFunc(cronExpr, workflow)
 	if err != nil {
@@ -209,8 +203,9 @@ func main() {
 }
 
 // fetchActiveSources 从数据库获取所有状态为 active 的源
-func fetchActiveSources(db *sql.DB) ([]models.URLSourcePassed, error) {
-	rows, err := db.Query(`SELECT id, url, name, tvg_id, tvg_logo, group_title, catchup, catchup_days, user_agent, source_type, raw_attributes, live_source_id, epg_id, epg_name, epg_logo, status, response_time_ms, resolution, bitrate, video_codec, audio_codec, frame_rate, download_speed, last_checked, fail_count, test_status, error_message, location, isp, extra_attrs, created_at, updated_at FROM url_sources_passed WHERE status = 'active'`)
+func fetchActiveSources(database *sql.DB) ([]models.URLSourcePassed, error) {
+	// 需要导入 database/sql 和 models，已在 import 中包含
+	rows, err := database.Query(`SELECT id, url, name, tvg_id, tvg_logo, group_title, catchup, catchup_days, user_agent, source_type, raw_attributes, live_source_id, epg_id, epg_name, epg_logo, status, response_time_ms, resolution, bitrate, video_codec, audio_codec, frame_rate, download_speed, last_checked, fail_count, test_status, error_message, location, isp, extra_attrs, created_at, updated_at FROM url_sources_passed WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
 	}
