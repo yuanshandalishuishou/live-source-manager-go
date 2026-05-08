@@ -6,14 +6,13 @@ import (
 
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
 )
 
 // AliasMatcher 应用正则别名替换频道名称
 type AliasMatcher struct {
-	mu      sync.RWMutex
-	rules   []compiledRule
-	db      *db.DB
+	mu    sync.RWMutex
+	rules []compiledRule
+	db    *db.DB
 }
 
 type compiledRule struct {

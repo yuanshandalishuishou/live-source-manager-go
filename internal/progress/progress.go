@@ -24,17 +24,17 @@ type Progress struct {
 
 // Manager 管理所有活跃的进度实例，并提供 WebSocket 广播能力
 type Manager struct {
-	mu       sync.RWMutex
-	tasks    map[string]*Progress
-	clients  map[*Client]bool // WebSocket 客户端，Client 定义略
+	mu        sync.RWMutex
+	tasks     map[string]*Progress
+	clients   map[*Client]bool // WebSocket 客户端，Client 定义略
 	broadcast chan interface{}
 }
 
 // NewManager 新建进度管理器
 func NewManager() *Manager {
 	return &Manager{
-		tasks:    make(map[string]*Progress),
-		clients:  make(map[*Client]bool),
+		tasks:     make(map[string]*Progress),
+		clients:   make(map[*Client]bool),
 		broadcast: make(chan interface{}, 256),
 	}
 }
@@ -96,12 +96,12 @@ func (p *Progress) snapshot() ProgressSnapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return ProgressSnapshot{
-		TaskID:        p.TaskID,
-		Total:         p.TotalSources,
-		Tested:        p.TestedSources,
-		Success:       p.SuccessCount,
-		Failed:        p.FailedCount,
-		Status:        p.Status,
+		TaskID:  p.TaskID,
+		Total:   p.TotalSources,
+		Tested:  p.TestedSources,
+		Success: p.SuccessCount,
+		Failed:  p.FailedCount,
+		Status:  p.Status,
 	}
 }
 

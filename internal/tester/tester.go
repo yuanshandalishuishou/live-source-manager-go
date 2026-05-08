@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -27,12 +28,12 @@ import (
 //   - 使用 ffprobe 参数数组防止命令注入
 //   - 归属地识别集成
 type Tester struct {
-	mu            sync.Mutex
-	cfg           *config.Config
-	db            *db.DB
-	geoResolver   *geo.Resolver
-	progMgr       *progress.Manager
-	httpClient    *http.Client
+	mu          sync.Mutex
+	cfg         *config.Config
+	db          *db.DB
+	geoResolver *geo.Resolver
+	progMgr     *progress.Manager
+	httpClient  *http.Client
 
 	batchBuffer   []*TestResult
 	batchMu       sync.Mutex
@@ -65,10 +66,10 @@ func NewTester(cfg *config.Config, database *db.DB, resolver *geo.Resolver, prog
 		fi = 2
 	}
 	t := &Tester{
-		cfg:           cfg,
-		db:            database,
-		geoResolver:   resolver,
-		progMgr:       progMgr,
+		cfg:         cfg,
+		db:          database,
+		geoResolver: resolver,
+		progMgr:     progMgr,
 		httpClient: &http.Client{
 			Timeout:   time.Duration(cfg.Testing.Timeout) * time.Second,
 			Transport: &http.Transport{DisableKeepAlives: true}, // 避免连接复用导致误判
@@ -163,7 +164,7 @@ func (t *Tester) fetchSourcesToTest(ctx context.Context) ([]models.URLSource, er
 		LIMIT ?
 	`
 	interval := fmt.Sprintf("-%d hours", t.cfg.Testing.RecheckInterval) // 如 24 小时
-	limit := t.cfg.Testing.MaxTestBatch // 单次测试最大数量，默认 2000
+	limit := t.cfg.Testing.MaxTestBatch                                 // 单次测试最大数量，默认 2000
 	if limit <= 0 {
 		limit = 2000
 	}

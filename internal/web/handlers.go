@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/rtmp"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/source"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/tester"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Handler 聚合所有依赖的处理器
@@ -72,7 +74,7 @@ func (h *Handler) RegisterRoutes(r *mux.Router) {
 	protected.HandleFunc("/filter/reload", h.handleFilterReload).Methods("POST")
 	protected.HandleFunc("/epg/update", h.handleEpgUpdate).Methods("POST")
 	protected.HandleFunc("/rtmp/status", h.handleRtmpStatus).Methods("GET")
-	protected.HandleFunc("/users", h.handleUsers).Methods("GET", "POST")          // 管理员功能
+	protected.HandleFunc("/users", h.handleUsers).Methods("GET", "POST") // 管理员功能
 	protected.HandleFunc("/users/{id:[0-9]+}", h.handleUserDetail).Methods("PUT", "DELETE")
 }
 
@@ -134,13 +136,13 @@ func (h *Handler) authMiddleware(next http.Handler) http.Handler {
 // handleStats 返回仪表盘统计信息
 func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	stats := struct {
-		TotalSources     int `json:"total_sources"`
-		ActiveSources    int `json:"active_sources"`
-		InactiveSources  int `json:"inactive_sources"`
-		UnknownSources   int `json:"unknown_sources"`
+		TotalSources     int    `json:"total_sources"`
+		ActiveSources    int    `json:"active_sources"`
+		InactiveSources  int    `json:"inactive_sources"`
+		UnknownSources   int    `json:"unknown_sources"`
 		LastTestTime     string `json:"last_test_time"`
-		TotalEPGPrograms int `json:"total_epg_programs"`
-		RTMPStreams      int `json:"rtmp_streams"`
+		TotalEPGPrograms int    `json:"total_epg_programs"`
+		RTMPStreams      int    `json:"rtmp_streams"`
 	}{
 		TotalSources:     h.db.CountURLSources(),
 		ActiveSources:    h.db.CountPassedByStatus("active"),

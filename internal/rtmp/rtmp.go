@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,12 +42,12 @@ type Manager struct {
 
 // RTMPConfig 推流配置
 type RTMPConfig struct {
-	MaxStreams    int
-	IdleTimeout   time.Duration
-	RetryMax      int           // 最大重试次数
+	MaxStreams     int
+	IdleTimeout    time.Duration
+	RetryMax       int           // 最大重试次数
 	RetryBaseDelay time.Duration // 基础退避延迟（秒）
-	FfmpegPath    string
-	TranscodeMode string
+	FfmpegPath     string
+	TranscodeMode  string
 }
 
 // NewManager 创建推流管理器，并创建全局 context 用于退出

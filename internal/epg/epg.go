@@ -1,8 +1,7 @@
 package epg
 
 import (
-	"context"
-	"encoding/xml"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"

@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/epg"
@@ -81,12 +83,12 @@ func main() {
 
 	// RTMP 管理器
 	rtmpCfg := rtmp.RTMPConfig{
-		MaxStreams:    cfg.RTMP.MaxStreams,
-		IdleTimeout:   time.Duration(cfg.RTMP.IdleTimeout) * time.Second,
-		RetryMax:      cfg.RTMP.RetryMax,
+		MaxStreams:     cfg.RTMP.MaxStreams,
+		IdleTimeout:    time.Duration(cfg.RTMP.IdleTimeout) * time.Second,
+		RetryMax:       cfg.RTMP.RetryMax,
 		RetryBaseDelay: time.Duration(cfg.RTMP.RetryBaseDelay) * time.Second,
-		FfmpegPath:    cfg.RTMP.FfmpegPath,
-		TranscodeMode: cfg.RTMP.TranscodeMode,
+		FfmpegPath:     cfg.RTMP.FfmpegPath,
+		TranscodeMode:  cfg.RTMP.TranscodeMode,
 	}
 	rtmpMgr := rtmp.NewManager(database, rtmpCfg)
 

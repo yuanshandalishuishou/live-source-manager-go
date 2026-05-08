@@ -58,7 +58,7 @@ type URLSource struct {
 // PassedSource 通过测试的有效源（结合 url_sources_passed 和 url_sources）
 type PassedSource struct {
 	ID             int
-	SourceID       int    // url_sources 的 id
+	SourceID       int // url_sources 的 id
 	URL            string
 	Name           string
 	TvgID          string
@@ -104,13 +104,13 @@ type BlacklistRule struct {
 
 // RTMPStream 推流记录
 type RTMPStream struct {
-	ID         int
-	SourceID   int
-	Status     string
-	PushURL    string
-	HLSURL     string
-	LastPush   *time.Time
-	IdleSec    int
+	ID       int
+	SourceID int
+	Status   string
+	PushURL  string
+	HLSURL   string
+	LastPush *time.Time
+	IdleSec  int
 }
 
 // TestHistory 测试历史

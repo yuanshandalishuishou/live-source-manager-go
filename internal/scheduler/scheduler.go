@@ -2,9 +2,9 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"

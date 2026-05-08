@@ -11,12 +11,12 @@ import (
 // Config 聚合所有配置项
 type Config struct {
 	WebServer struct {
-		Port              int      `ini:"port"`
-		JWTSecret         string   `ini:"jwt_secret"`
-		TokenExpireHours  int      `ini:"token_expire_hours"`
-		RateLimit         float64  `ini:"rate_limit"`
-		RateBurst         int      `ini:"rate_burst"`
-		AllowedOrigins    []string `ini:"-"` // 特殊处理
+		Port             int      `ini:"port"`
+		JWTSecret        string   `ini:"jwt_secret"`
+		TokenExpireHours int      `ini:"token_expire_hours"`
+		RateLimit        float64  `ini:"rate_limit"`
+		RateBurst        int      `ini:"rate_burst"`
+		AllowedOrigins   []string `ini:"-"` // 特殊处理
 	} `ini:"WebServer"`
 	Network struct {
 		ProxyEnabled bool   `ini:"proxy_enabled"`
@@ -45,19 +45,19 @@ type Config struct {
 		OriginTypePrefer string `ini:"origin_type_prefer"`
 	} `ini:"Filter"`
 	RTMP struct {
-		OpenRTMP        bool   `ini:"open_rtmp"`
-		NginxHTTPPort   int    `ini:"nginx_http_port"`
-		NginxRTMPPort   int    `ini:"nginx_rtmp_port"`
-		IdleTimeout     int    `ini:"idle_timeout"`
-		MaxStreams      int    `ini:"max_streams"`
-		TranscodeMode   string `ini:"transcode_mode"`
-		RetryMax        int    `ini:"retry_max"`
-		RetryBaseDelay  int    `ini:"retry_base_delay"`
-		FfmpegPath      string `ini:"ffmpeg_path"`
+		OpenRTMP       bool   `ini:"open_rtmp"`
+		NginxHTTPPort  int    `ini:"nginx_http_port"`
+		NginxRTMPPort  int    `ini:"nginx_rtmp_port"`
+		IdleTimeout    int    `ini:"idle_timeout"`
+		MaxStreams     int    `ini:"max_streams"`
+		TranscodeMode  string `ini:"transcode_mode"`
+		RetryMax       int    `ini:"retry_max"`
+		RetryBaseDelay int    `ini:"retry_base_delay"`
+		FfmpegPath     string `ini:"ffmpeg_path"`
 	} `ini:"RTMP"`
 	EPG struct {
-		UpdateInterval int `ini:"update_interval"`
-		RetentionDays  int `ini:"retention_days"`
+		UpdateInterval int  `ini:"update_interval"`
+		RetentionDays  int  `ini:"retention_days"`
 		IncludeEPGURL  bool `ini:"include_epg_url"`
 	} `ini:"EPG"`
 	System struct {

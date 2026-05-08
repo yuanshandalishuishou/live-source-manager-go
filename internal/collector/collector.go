@@ -1,8 +1,10 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
