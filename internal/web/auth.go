@@ -1,93 +1,84 @@
 package web
 
 import (
-	"net/http"
-	"strings"
+	"errors"
+	"fmt"
 	"time"
 
-	"live-source-manager-go/internal/models"
-
-	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
 )
 
-var jwtSecret = []byte("change-this-secret-in-production")
-
+// Claims 自定义 JWT 声明
 type Claims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
+	UserID   int    `json:"uid"`
+	Username string `json:"uname"`
+	IsAdmin  bool   `json:"admin"`
 	jwt.RegisteredClaims
 }
 
-// GenerateToken 生成 JWT Token
-func GenerateToken(user *models.User) (string, error) {
-	claims := Claims{
-		UserID:   user.ID,
-		Username: user.Username,
-		IsAdmin:  user.IsAdmin,
+// JWTManager 负责 token 签发与校验
+type JWTManager struct {
+	secret        []byte
+	tokenDuration time.Duration
+}
+
+// NewJWTManager 从配置初始化密钥与过期时间
+func NewJWTManager(cfg *config.Config) *JWTManager {
+	secret := cfg.WebServer.JWTSecret
+	if secret == "" {
+		secret = fmt.Sprintf("live-source-manager-default-%d", time.Now().UnixNano())
+		logger.Warn("JWT Secret 未在配置中设置，使用随机值（每次重启 token 失效）")
+	}
+	tokenDuration := time.Duration(cfg.WebServer.TokenExpireHours) * time.Hour
+	if tokenDuration <= 0 {
+		tokenDuration = 24 * time.Hour
+	}
+	return &JWTManager{
+		secret:        []byte(secret),
+		tokenDuration: tokenDuration,
+	}
+}
+
+// GenerateToken 为用户生成 JWT
+func (m *JWTManager) GenerateToken(userID int, username string, isAdmin bool) (string, error) {
+	claims := &Claims{
+		UserID:   userID,
+		Username: username,
+		IsAdmin:  isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.tokenDuration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "live-source-manager",
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(m.secret)
 }
 
-// ParseToken 解析 Token
-func ParseToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		return jwtSecret, nil
+// ValidateToken 验证 token 字符串，返回解析后的 Claims
+// 改进：首先检查 token 解析错误，然后进行类型断言，避免 nil panic
+func (m *JWTManager) ValidateToken(tokenStr string) (*Claims, error) {
+	if tokenStr == "" {
+		return nil, errors.New("缺失 token")
+	}
+
+	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		// 验证签名算法
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("非预期的签名方法: %v", t.Header["alg"])
+		}
+		return m.secret, nil
 	})
-	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-		return claims, nil
+	if err != nil {
+		return nil, fmt.Errorf("token 解析失败: %w", err)
 	}
-	return nil, err
-}
 
-// AuthMiddleware Gin 认证中间件
-func (s *Server) AuthMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// 尝试从 Header 获取
-		authHeader := c.GetHeader("Authorization")
-		var tokenString string
-		if authHeader != "" {
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && parts[0] == "Bearer" {
-				tokenString = parts[1]
-			}
-		}
-		// 尝试从 Cookie 获取
-		if tokenString == "" {
-			tokenString, _ = c.Cookie("token")
-		}
-		if tokenString == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "未提供认证令牌"})
-			return
-		}
-
-		claims, err := ParseToken(tokenString)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "无效的令牌"})
-			return
-		}
-		c.Set("userID", claims.UserID)
-		c.Set("username", claims.Username)
-		c.Set("isAdmin", claims.IsAdmin)
-		c.Next()
+	// 安全断言，防止 token.Claims 为 nil
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, errors.New("无效的 token 或 Claims 类型错误")
 	}
-}
-
-// HashPassword 加密密码
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
-}
-
-// CheckPassword 验证密码
-func CheckPassword(hash, password string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
+	return claims, nil
 }
