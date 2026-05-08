@@ -1,182 +1,188 @@
-// Package source 负责源的下载、解析、别名应用、去重与入库。
 package source
 
 import (
 	"bufio"
-	"database/sql"
+	"bytes"
 	"fmt"
-	"regexp"
 	"strings"
 
-	"live-source-manager-go/internal/models"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
 )
 
-// ExtInfInfo 从 #EXTINF 行提取的信息
-type ExtInfInfo struct {
-	Name        string
-	Logo        string
-	Group       string
-	TvgID       string
-	TvgName     string
-	UserAgent   string
-	Catchup     string
-	CatchupDays string
+// Parser 解析 M3U / TXT 格式的源列表
+type Parser struct{}
+
+// NewParser 创建解析器
+func NewParser() *Parser {
+	return &Parser{}
 }
 
-func toNullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
+// Parse 从字节内容解析为 URLSource 列表
+func (p *Parser) Parse(content []byte) ([]models.URLSource, error) {
+	if len(content) == 0 {
+		return nil, fmt.Errorf("空内容")
 	}
-	return sql.NullString{String: s, Valid: true}
-}
 
-func toNullInt32(s string) sql.NullInt32 {
-	if s == "" {
-		return sql.NullInt32{}
-	}
-	var i int32
-	fmt.Sscanf(s, "%d", &i)
-	return sql.NullInt32{Int32: i, Valid: true}
-}
+	// 移除 BOM
+	content = bytes.TrimPrefix(content, []byte{0xEF, 0xBB, 0xBF})
 
-// ParseM3U 解析 M3U 内容，返回原始源列表
-func ParseM3U(content, sourceType, sourcePath string) []models.URLSource {
-	var sources []models.URLSource
-	lines := strings.Split(content, "\n")
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	var entries []models.URLSource
 
-	extInfRegex := regexp.MustCompile(`^#EXTINF:`)
-	attrRegex := regexp.MustCompile(`([a-zA-Z-]+)="([^"]*)"`)
+	var currentName, currentTvgID, currentTvgLogo, currentGroup, currentURL string
+	var currentUA, currentRawAttrs string
 
-	var currentExtInf *ExtInfInfo
-
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" || strings.HasPrefix(line, "#EXTM3U") {
+parseLoop:
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
 			continue
 		}
 
-		if extInfRegex.MatchString(line) {
-			currentExtInf = parseExtInfLine(line, attrRegex)
+		// M3U 头部
+		if strings.HasPrefix(line, "#EXTINF:") {
+			// 例如: #EXTINF:-1 tvg-id="cctv1" tvg-name="CCTV1" group-title="央视",CCTV1
+			infoPart := line[len("#EXTINF:"):]
+
+			// 解析属性
+			attrs, displayName := extractAttributes(infoPart)
+			currentName = displayName
+			currentTvgID = attrs["tvg-id"]
+			currentTvgLogo = attrs["tvg-logo"]
+			currentGroup = attrs["group-title"]
+			currentUA = attrs["user-agent"]
+			currentRawAttrs = marshalAttrs(attrs)
+
+		} else if !strings.HasPrefix(line, "#") {
+			// URL 行
+			currentURL = line
+			if currentURL != "" && currentName != "" {
+				entries = append(entries, models.URLSource{
+					URL:           currentURL,
+					Name:          currentName,
+					TvgID:         currentTvgID,
+					TvgLogo:       currentTvgLogo,
+					GroupTitle:    currentGroup,
+					UserAgent:     currentUA,
+					RawAttributes: currentRawAttrs,
+					SourceType:    guessType(currentURL),
+				})
+			}
+			// 重置
+			currentName, currentTvgID, currentTvgLogo, currentGroup, currentURL, currentUA, currentRawAttrs = "", "", "", "", "", "", ""
+		} else if strings.HasPrefix(line, "#EXTINF") {
+			// 另一形式，按需处理
 			continue
 		}
-
-		if currentExtInf != nil && !strings.HasPrefix(line, "#") && line != "" {
-			urlParts := strings.Split(line, "|")
-			streamURL := urlParts[0]
-			userAgent := currentExtInf.UserAgent
-			if len(urlParts) > 1 {
-				for _, part := range urlParts[1:] {
-					if strings.HasPrefix(part, "User-Agent=") {
-						userAgent = strings.TrimPrefix(part, "User-Agent=")
-					}
-				}
-			}
-
-			src := models.URLSource{
-				URL:           streamURL,
-				Name:          currentExtInf.Name,
-				TvgID:         toNullString(currentExtInf.TvgID),
-				TvgLogo:       toNullString(currentExtInf.Logo),
-				GroupTitle:    toNullString(currentExtInf.Group),
-				Catchup:       toNullString(currentExtInf.Catchup),
-				CatchupDays:   toNullInt32(currentExtInf.CatchupDays),
-				UserAgent:     toNullString(userAgent),
-				SourceType:    "video",
-				RawAttributes: toNullString(""),
-			}
-			sources = append(sources, src)
-			currentExtInf = nil
-		}
 	}
-	return sources
+
+	// 处理 TXT 格式：每行可能是 url,name 或 name,url
+	if len(entries) == 0 {
+		entries = p.parseTXT(content)
+	}
+
+	return entries, scanner.Err()
 }
 
-// ParseTXT 解析 TXT 格式（格式：频道名,URL）
-func ParseTXT(content, sourceType, sourcePath string) []models.URLSource {
-	var sources []models.URLSource
-	scanner := bufio.NewScanner(strings.NewReader(content))
+// parseTXT 针对简单逗号分隔文本
+func (p *Parser) parseTXT(content []byte) []models.URLSource {
+	var entries []models.URLSource
+	scanner := bufio.NewScanner(bytes.NewReader(content))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		parts := strings.SplitN(line, ",", 2)
-		if len(parts) != 2 {
-			continue
+		if len(parts) == 2 {
+			url := strings.TrimSpace(parts[0])
+			name := strings.TrimSpace(parts[1])
+			if strings.HasPrefix(url, "http") || strings.HasPrefix(url, "rtmp") || strings.HasPrefix(url, "udp") {
+				entries = append(entries, models.URLSource{
+					URL:  url,
+					Name: name,
+				})
+			} else {
+				// 可能顺序颠倒
+				entries = append(entries, models.URLSource{
+					URL:  name,
+					Name: url,
+				})
+			}
 		}
-		name := strings.TrimSpace(parts[0])
-		urlStr := strings.TrimSpace(parts[1])
+	}
+	return entries
+}
 
-		urlParts := strings.Split(urlStr, "|")
-		streamURL := urlParts[0]
-		userAgent := ""
-		if len(urlParts) > 1 {
-			for _, part := range urlParts[1:] {
-				if strings.HasPrefix(part, "User-Agent=") {
-					userAgent = strings.TrimPrefix(part, "User-Agent=")
+// extractAttributes 从 EXTINF 字符串中解析键值属性和显示名称
+// 例如: -1 tvg-id="cctv1" group-title="央视",CCTV1
+func extractAttributes(input string) (map[string]string, string) {
+	attrs := make(map[string]string)
+	// 提取逗号后的显示名称
+	commaIdx := strings.LastIndex(input, ",")
+	displayName := ""
+	if commaIdx >= 0 {
+		displayName = strings.TrimSpace(input[commaIdx+1:])
+		input = input[:commaIdx]
+	}
+	// 简单解析 key="value"
+	for {
+		eqIdx := strings.Index(input, "=")
+		if eqIdx < 0 {
+			break
+		}
+		// 获取 key
+		keyEnd := eqIdx
+		keyStart := strings.LastIndexAny(input[:keyEnd], " ") + 1
+		key := strings.TrimSpace(input[keyStart:keyEnd])
+		// 获取 value
+		rest := input[eqIdx+1:]
+		if len(rest) > 0 && rest[0] == '"' {
+			rest = rest[1:]
+			quoteEnd := strings.Index(rest, "\"")
+			if quoteEnd < 0 {
+				// 未闭合引号，取到空格
+				quoteEnd = strings.Index(rest, " ")
+				if quoteEnd < 0 {
+					quoteEnd = len(rest)
 				}
 			}
-		}
-		src := models.URLSource{
-			URL:        streamURL,
-			Name:       name,
-			UserAgent:  toNullString(userAgent),
-			SourceType: "video",
-		}
-		sources = append(sources, src)
-	}
-	return sources
-}
-
-func parseExtInfLine(line string, attrRegex *regexp.Regexp) *ExtInfInfo {
-	info := &ExtInfInfo{}
-	matches := attrRegex.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) == 3 {
-			key, value := match[1], match[2]
-			switch strings.ToLower(key) {
-			case "tvg-logo":
-				info.Logo = value
-			case "group-title":
-				info.Group = value
-			case "tvg-id":
-				info.TvgID = value
-			case "tvg-name":
-				info.TvgName = value
-			case "user-agent":
-				info.UserAgent = value
-			case "catchup":
-				info.Catchup = value
-			case "catchup-days":
-				info.CatchupDays = value
+			value := rest[:quoteEnd]
+			attrs[key] = value
+			input = rest[quoteEnd:]
+		} else {
+			// 无引号值，取到下一个空格
+			spaceIdx := strings.Index(rest, " ")
+			if spaceIdx < 0 {
+				attrs[key] = rest
+				break
 			}
+			attrs[key] = rest[:spaceIdx]
+			input = rest[spaceIdx:]
 		}
 	}
-	commaIdx := strings.LastIndex(line, ",")
-	if commaIdx != -1 && commaIdx < len(line)-1 {
-		info.Name = strings.TrimSpace(line[commaIdx+1:])
-	} else {
-		info.Name = "Unknown"
-	}
-	if idx := strings.Index(info.Name, "|"); idx != -1 {
-		info.Name = info.Name[:idx]
-	}
-	return info
+	return attrs, displayName
 }
 
-func toNullString(s string) sql.NullString {
-	if s == "" {
-		return sql.NullString{}
+// guessType 根据 URL 判断源类型
+func guessType(url string) string {
+	if strings.HasPrefix(url, "rtmp") {
+		return "rtmp"
 	}
-	return sql.NullString{String: s, Valid: true}
+	if strings.HasPrefix(url, "udp") || strings.HasPrefix(url, "rtp") {
+		return "multicast"
+	}
+	return "video"
 }
 
-func toNullInt32(s string) sql.NullInt32 {
-	if s == "" {
-		return sql.NullInt32{}
+// marshalAttrs 将属性 map 序列化为 JSON 字符串（偷懒实现）
+func marshalAttrs(attrs map[string]string) string {
+	if len(attrs) == 0 {
+		return "{}"
 	}
-	var i int32
-	// 简单转换，忽略错误
-	fmt.Sscanf(s, "%d", &i)
-	return sql.NullInt32{Int32: i, Valid: true}
+	var parts []string
+	for k, v := range attrs {
+		parts = append(parts, fmt.Sprintf(`"%s":"%s"`, k, v))
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
