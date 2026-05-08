@@ -1,148 +1,143 @@
-// Package web 提供 Web 管理界面和 REST API，包括用户认证、配置管理、源管理、实时进度推送等。
 package web
 
 import (
-	"database/sql"
-	"embed"
-	"fmt"
-	"html/template"
-	"io/fs"
+	"log"
+	"net"
 	"net/http"
-	"os"
+	"strings"
+	"sync"
+	"time"
 
-	"live-source-manager-go/internal/config"
-	"live-source-manager-go/internal/filter"
-	"live-source-manager-go/internal/generator"
-	"live-source-manager-go/internal/geo"
-	"live-source-manager-go/internal/rules"
-	"live-source-manager-go/internal/source"
-	"live-source-manager-go/internal/tester"
-	"live-source-manager-go/pkg/logger"
-
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	"github.com/gorilla/mux"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
+	"golang.org/x/time/rate"
 )
 
-//go:embed templates/* static/*
-var embeddedFS embed.FS
-
-// Server Web 服务器
+// Server 封装 HTTP 服务，支持速率限制与 CORS
 type Server struct {
-	cfg        *config.Config
-	log        *logger.Logger
-	router     *gin.Engine
-	db         *sql.DB
-	rulesMgr   *rules.Manager
-	sourceMgr  *source.Manager
-	tester     *tester.Tester
-	filter     *filter.Filter
-	generator  *generator.Generator
-	geo        *geo.Resolver
-	wsUpgrader websocket.Upgrader
-
-	// 工作流触发器
-	workflowFunc func()
+	router   *mux.Router
+	cfg      *config.Config
+	limiters sync.Map // 存储每个 IP 的 rate.Limiter
 }
 
-// NewServer 创建 Web 服务器实例
-func NewServer(cfg *config.Config, log *logger.Logger, db *sql.DB,
-	rulesMgr *rules.Manager, sourceMgr *source.Manager, testerInst *tester.Tester,
-	filterInst *filter.Filter, generatorInst *generator.Generator, geoResolver *geo.Resolver,
-	workflowFunc func()) *Server {
+// NewServer 创建服务器并注册全局中间件
+func NewServer(cfg *config.Config) *Server {
+	s := &Server{cfg: cfg}
+	r := mux.NewRouter()
 
-	gin.SetMode(gin.ReleaseMode)
-	router := gin.New()
-	router.Use(gin.Recovery())
-	router.Use(corsMiddleware())
-	router.Use(requestLoggerMiddleware(log))
+	// 中间件顺序：日志 -> CORS -> 速率限制 -> 路由
+	r.Use(s.loggingMiddleware)
+	r.Use(s.corsMiddleware)
+	r.Use(s.rateLimitMiddleware)
 
-	s := &Server{
-		cfg:          cfg,
-		log:          log,
-		router:       router,
-		db:           db,
-		rulesMgr:     rulesMgr,
-		sourceMgr:    sourceMgr,
-		tester:       testerInst,
-		filter:       filterInst,
-		generator:    generatorInst,
-		geo:          geoResolver,
-		workflowFunc: workflowFunc,
-		wsUpgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
-	}
+	// 注册路由（示例）
+	api := r.PathPrefix("/api").Subrouter()
+	api.HandleFunc("/login", s.handleLogin).Methods("POST")
+	// ... 其他路由
 
-	s.setupRoutes()
+	s.router = r
 	return s
 }
 
-func (s *Server) setupRoutes() {
-	// 静态文件和模板
-	if _, err := os.Stat("./web/templates"); err == nil {
-		s.router.LoadHTMLGlob("./web/templates/*")
-		s.router.Static("/static", "./web/static")
-	} else {
-		tmplFS, _ := fs.Sub(embeddedFS, "templates")
-		staticFS, _ := fs.Sub(embeddedFS, "static")
-		s.router.SetHTMLTemplate(template.Must(template.ParseFS(tmplFS, "*.html")))
-		s.router.StaticFS("/static", http.FS(staticFS))
-	}
-
-	// 公开路由
-	s.router.GET("/login", s.LoginPage)
-	s.router.POST("/api/login", s.Login)
-	s.router.GET("/health", s.HealthCheck)
-	s.router.GET("/ready", s.ReadyCheck)
-
-	// API 路由组（需认证）
-	api := s.router.Group("/api")
-	api.Use(s.AuthMiddleware())
-	{
-		api.GET("/stats", s.GetStats)
-		api.GET("/sources", s.ListSources)
-		api.POST("/sources/:id/toggle", s.ToggleSource)
-		api.POST("/sources/test", s.TestSingleSource)
-		api.GET("/subscriptions", s.ListSubscriptions)
-		api.POST("/subscriptions", s.CreateSubscription)
-		api.PUT("/subscriptions/:id", s.UpdateSubscription)
-		api.DELETE("/subscriptions/:id", s.DeleteSubscription)
-		api.GET("/categories", s.ListCategories)
-		api.POST("/categories", s.CreateCategory)
-		api.PUT("/categories/:id", s.UpdateCategory)
-		api.DELETE("/categories/:id", s.DeleteCategory)
-		api.GET("/display-rules", s.ListDisplayRules)
-		api.PUT("/display-rules", s.UpdateDisplayRules)
-		api.GET("/config", s.GetConfig)
-		api.POST("/config", s.SaveConfig)
-		api.GET("/logs", s.GetLogs)
-		api.POST("/scan/hotel", s.TriggerHotelScan)
-		api.POST("/scan/multicast", s.TriggerMulticastScan)
-		api.POST("/trigger-update", s.TriggerUpdate)
-		api.GET("/task/status", s.GetTaskStatus)
-	}
-
-	// WebSocket 路由（需认证）
-	s.router.GET("/ws/progress", s.AuthMiddleware(), s.WebSocketHandler)
-
-	// 页面路由（需认证）
-	pages := s.router.Group("/")
-	pages.Use(s.AuthMiddleware())
-	{
-		pages.GET("/", s.IndexPage)
-		pages.GET("/sources", s.SourcesPage)
-		pages.GET("/subscriptions", s.SubscriptionsPage)
-		pages.GET("/categories", s.CategoriesPage)
-		pages.GET("/display-rules", s.DisplayRulesPage)
-		pages.GET("/config", s.ConfigPage)
-		pages.GET("/logs", s.LogsPage)
-		pages.GET("/preview", s.PreviewPage)
-	}
+// Serve 启动 HTTP 服务
+func (s *Server) Serve() error {
+	addr := fmt.Sprintf(":%d", s.cfg.WebServer.Port)
+	log.Printf("Web 服务启动于 %s", addr)
+	return http.ListenAndServe(addr, s.router)
 }
 
-// Run 启动服务器
-func (s *Server) Run() error {
-	addr := fmt.Sprintf(":%d", s.cfg.WebServer.Port)
-	s.log.Info("Web 管理界面启动于 http://0.0.0.0%s", addr)
-	return s.router.Run(addr)
+// ---------- 中间件 ----------
+
+// loggingMiddleware 记录请求基本信息
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r)
+		log.Printf("%s %s %s %v", r.RemoteAddr, r.Method, r.URL.Path, time.Since(start))
+	})
+}
+
+// corsMiddleware 处理跨域请求，根据配置白名单放行
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	allowedOrigins := s.cfg.WebServer.AllowedOrigins
+	hasStar := false
+	originMap := make(map[string]bool)
+	for _, o := range allowedOrigins {
+		if o == "*" {
+			hasStar = true
+			break
+		}
+		originMap[o] = true
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		allow := false
+		if hasStar {
+			allow = true
+		} else if _, ok := originMap[origin]; ok {
+			allow = true
+		}
+		if allow {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rateLimitMiddleware 基于客户端 IP 的令牌桶限流
+func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
+	limitPerSec := rate.Limit(s.cfg.WebServer.RateLimit) // 默认 10
+	burst := s.cfg.WebServer.RateBurst
+	if limitPerSec <= 0 {
+		return next // 不限流
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := readUserIP(r)
+		key := "rate:" + ip
+		limiter, _ := s.limiters.LoadOrStore(key, rate.NewLimiter(limitPerSec, burst))
+		l := limiter.(*rate.Limiter)
+		if !l.Allow() {
+			http.Error(w, "请求过于频繁，请稍后再试", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readUserIP 获取用户真实 IP，优先考虑代理头
+func readUserIP(r *http.Request) string {
+	// X-Forwarded-For 可能包含多个 IP，取第一个
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff != "" {
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	// 尝试 X-Real-IP
+	xri := r.Header.Get("X-Real-IP")
+	if xri != "" {
+		return xri
+	}
+	// 回退到 RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// ---------- 示例路由处理 ----------
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// 省略具体实现，使用 auth 模块签发 token
 }
