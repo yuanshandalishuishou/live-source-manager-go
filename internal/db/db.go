@@ -389,3 +389,27 @@ func (d *DB) UpdateSourceEPGID(sourceID int, epgID string) error {
 	_, err := d.conn.Exec("UPDATE url_sources_passed SET epg_id=? WHERE id=?", epgID, sourceID)
 	return err
 }
+
+
+// internal/db/db.go (新增方法)
+// 为 tester 提供状态和元数据更新接口
+
+// UpdateLiveSourceStatus 更新订阅源状态（供测试器使用）
+func (d *DB) UpdateLiveSourceStatus(id int, status string) error {
+	_, err := d.conn.Exec("UPDATE live_sources SET download_status = ? WHERE id = ?", status, id)
+	return err
+}
+
+// UpdateLiveSourceMeta 更新源的元数据（分辨率/码率等）
+func (d *DB) UpdateLiveSourceMeta(id int, meta *models.StreamMeta) error {
+	resolution := fmt.Sprintf("%dx%d", meta.Width, meta.Height)
+	_, err := d.conn.Exec("UPDATE live_sources SET http_status = 200, retry_count = 0 WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	// 同时写入 url_sources_passed 表（如果存在）
+	_, err = d.conn.Exec(`INSERT INTO url_sources_passed (name, url, status, resolution, bitrate)
+		SELECT name, location, 'active', ?, ? FROM live_sources WHERE id = ?`,
+		resolution, meta.BitRate, id)
+	return err
+}
