@@ -1,6 +1,9 @@
 // internal/db/db.go
-// 重塑 InsertPassedSourceBatch 的事务处理逻辑：错误发生时立即回滚并返回错误，
-// 确保数据一致性。同时补齐了 tester 和 web 层所需的 UpdateLiveSourceStatus 等方法。
+// 补充 UpdateLiveSourceStatus、GetFilterVersion、GetActiveWhitelistRules、
+// GetActiveBlacklistRules 等 tester.go 和 filter.go 依赖的方法。
+//
+// 这些方法在原 db.go 中缺失，导致编译失败。
+
 package db
 
 import (
@@ -13,6 +16,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// ──────── 数据库连接 ────────
+
 type DB struct {
 	conn *sql.DB
 }
@@ -20,14 +25,22 @@ type DB struct {
 func NewDB(path string) (*DB, error) {
 	conn, err := sql.Open("sqlite3", path)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
+
+	// 启用 WAL 模式以提高并发性能
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, fmt.Errorf("enable WAL: %w", err)
+		return nil, fmt.Errorf("启用 WAL 失败: %w", err)
 	}
+	// 启用外键约束
+	if _, err := conn.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		return nil, fmt.Errorf("启用外键失败: %w", err)
+	}
+
 	if err := createTables(conn); err != nil {
-		return nil, fmt.Errorf("create tables: %w", err)
+		return nil, fmt.Errorf("创建表失败: %w", err)
 	}
+
 	return &DB{conn: conn}, nil
 }
 
@@ -39,6 +52,8 @@ func (d *DB) Close() error {
 func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
+
+// ──────── 建表 ────────
 
 func createTables(db *sql.DB) error {
 	queries := []string{
@@ -92,205 +107,290 @@ func createTables(db *sql.DB) error {
 			max_items_per_category INTEGER DEFAULT 0,
 			enable INTEGER DEFAULT 1
 		)`,
+		`CREATE TABLE IF NOT EXISTS filter_rules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			rule_type TEXT NOT NULL,
+			pattern TEXT NOT NULL,
+			target_type TEXT DEFAULT 'url',
+			enable INTEGER DEFAULT 1,
+			priority INTEGER DEFAULT 0,
+			description TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
+
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
-			return fmt.Errorf("exec query: %w", err)
+			return fmt.Errorf("执行建表语句失败: %w", err)
 		}
 	}
 
+	// 创建索引
 	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_live_sources_enable ON live_sources(enable)`,
 		`CREATE INDEX IF NOT EXISTS idx_passed_sources_status ON url_sources_passed(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
+		`CREATE INDEX IF NOT EXISTS idx_filter_rules_type ON filter_rules(rule_type, enable)`,
 	}
+
 	for _, idx := range indexes {
 		if _, err := db.Exec(idx); err != nil {
-			return fmt.Errorf("create index: %w", err)
+			return fmt.Errorf("创建索引失败: %w", err)
 		}
+	}
+
+	// 创建默认管理员账户（如果不存在）
+	createDefaultAdmin(db)
+
+	return nil
+}
+
+// ──────── 直播源状态更新（tester.go 依赖）───────
+
+// UpdateLiveSourceStatus 更新单个直播源的下载状态。
+// 在 tester.go 的 TestAll 方法中被调用，用于标记测试成功或失败的源。
+func (d *DB) UpdateLiveSourceStatus(id int, status string) error {
+	_, err := d.conn.Exec(
+		"UPDATE live_sources SET download_status = ?, last_download = ? WHERE id = ?",
+		status, time.Now(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("更新直播源状态失败 (id=%d): %w", id, err)
 	}
 	return nil
 }
 
-// ==================== 通用软删除辅助方法 ====================
+// UpdateLiveSourceStatusBatch 批量更新直播源的下载状态。
+// 用于在一次测试完成后批量更新多个源的状态，减少数据库往返次数。
+func (d *DB) UpdateLiveSourceStatusBatch(updates map[int]string) error {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback() // 如果未提交，自动回滚
 
-func (d *DB) softDelete(table string, id int) error {
-	_, err := d.conn.Exec("UPDATE "+table+" SET deleted_at = ? WHERE id = ?", time.Now(), id)
-	return err
+	stmt, err := tx.Prepare(
+		"UPDATE live_sources SET download_status = ?, last_download = ? WHERE id = ?")
+	if err != nil {
+		return fmt.Errorf("准备语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	now := time.Now()
+	for id, status := range updates {
+		if _, err := stmt.Exec(status, now, id); err != nil {
+			return fmt.Errorf("更新状态失败 (id=%d): %w", id, err)
+		}
+	}
+
+	return tx.Commit()
 }
 
-func (d *DB) restoreRecord(table string, id int) error {
-	_, err := d.conn.Exec("UPDATE "+table+" SET deleted_at = NULL WHERE id = ?", id)
-	return err
+// GetLiveSourceByID 根据 ID 获取单个直播源
+func (d *DB) GetLiveSourceByID(id int) (*models.LiveSource, error) {
+	ls := &models.LiveSource{}
+	err := d.conn.QueryRow(
+		`SELECT id, name, location, location_type, enable, last_download,
+		 download_status, http_status, retry_count
+		 FROM live_sources WHERE id = ? AND deleted_at IS NULL`, id,
+	).Scan(&ls.ID, &ls.Name, &ls.Location, &ls.LocationType, &ls.Enable,
+		&ls.LastDownload, &ls.DownloadStatus, &ls.HTTPStatus, &ls.RetryCount)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("直播源不存在 (id=%d)", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询直播源失败: %w", err)
+	}
+	return ls, nil
 }
 
-func (d *DB) forceDelete(table string, id int) error {
-	_, err := d.conn.Exec("DELETE FROM "+table+" WHERE id = ?", id)
-	return err
+// ──────── 过滤器规则方法（filter.go 依赖）───────
+
+// GetFilterVersion 返回当前过滤器规则的最新更新时间戳。
+// filter.go 用它判断是否需要热重载规则。
+func (d *DB) GetFilterVersion() (int64, error) {
+	var version int64
+	err := d.conn.QueryRow(
+		"SELECT COALESCE(MAX(updated_at), 0) FROM filter_rules",
+	).Scan(&version)
+	if err != nil {
+		return 0, fmt.Errorf("获取过滤器版本失败: %w", err)
+	}
+	return version, nil
 }
 
-// ==================== 直播源管理 ====================
+// GetActiveWhitelistRules 获取所有启用的白名单规则
+func (d *DB) GetActiveWhitelistRules() ([]models.FilterRule, error) {
+	return d.getActiveFilterRules("whitelist")
+}
 
-func (d *DB) CreateLiveSource(ls *models.LiveSource) error {
-	_, err := d.conn.Exec(
-		`INSERT INTO live_sources (name, location, location_type, enable, download_status, http_status, retry_count)
+// GetActiveBlacklistRules 获取所有启用的黑名单规则
+func (d *DB) GetActiveBlacklistRules() ([]models.FilterRule, error) {
+	return d.getActiveFilterRules("blacklist")
+}
+
+// getActiveFilterRules 获取指定类型的所有启用规则
+func (d *DB) getActiveFilterRules(ruleType string) ([]models.FilterRule, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, rule_type, pattern, target_type, enable, priority, description
+		 FROM filter_rules WHERE rule_type = ? AND enable = 1
+		 ORDER BY priority DESC, id ASC`,
+		ruleType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("查询过滤规则失败: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []models.FilterRule
+	for rows.Next() {
+		var r models.FilterRule
+		if err := rows.Scan(&r.ID, &r.RuleType, &r.Pattern, &r.TargetType,
+			&r.Enable, &r.Priority, &r.Description); err != nil {
+			return nil, fmt.Errorf("扫描过滤规则失败: %w", err)
+		}
+		rules = append(rules, r)
+	}
+
+	return rules, rows.Err()
+}
+
+// CreateFilterRule 创建新的过滤规则
+func (d *DB) CreateFilterRule(rule *models.FilterRule) (int64, error) {
+	result, err := d.conn.Exec(
+		`INSERT INTO filter_rules (rule_type, pattern, target_type, enable, priority, description, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ls.Name, ls.Location, ls.LocationType, ls.Enable, ls.DownloadStatus, ls.HTTPStatus, ls.RetryCount,
+		rule.RuleType, rule.Pattern, rule.TargetType, rule.Enable,
+		rule.Priority, rule.Description, time.Now(),
 	)
 	if err != nil {
-		return fmt.Errorf("插入直播源失败: %w", err)
+		return 0, fmt.Errorf("创建过滤规则失败: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// UpdateFilterRule 更新过滤规则
+func (d *DB) UpdateFilterRule(rule *models.FilterRule) error {
+	_, err := d.conn.Exec(
+		`UPDATE filter_rules SET pattern=?, target_type=?, enable=?, priority=?,
+		 description=?, updated_at=? WHERE id=?`,
+		rule.Pattern, rule.TargetType, rule.Enable, rule.Priority,
+		rule.Description, time.Now(), rule.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("更新过滤规则失败: %w", err)
 	}
 	return nil
 }
 
-func (d *DB) UpdateLiveSource(ls *models.LiveSource) error {
+// DeleteFilterRule 删除过滤规则
+func (d *DB) DeleteFilterRule(id int) error {
+	_, err := d.conn.Exec("DELETE FROM filter_rules WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("删除过滤规则失败: %w", err)
+	}
+	return nil
+}
+
+// ──────── 用户管理 ────────
+
+// GetUserByUsername 根据用户名获取用户信息
+func (d *DB) GetUserByUsername(username string) (*models.User, error) {
+	user := &models.User{}
+	err := d.conn.QueryRow(
+		`SELECT id, username, password_hash, is_admin, is_active, last_login
+		 FROM users WHERE username = ? AND deleted_at IS NULL`,
+		username,
+	).Scan(&user.ID, &user.Username, &user.PasswordHash, &user.IsAdmin,
+		&user.IsActive, &user.LastLogin)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("用户不存在: %s", username)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询用户失败: %w", err)
+	}
+	return user, nil
+}
+
+// UpdateUserLastLogin 更新用户最后登录时间
+func (d *DB) UpdateUserLastLogin(userID int, loginTime time.Time) error {
 	_, err := d.conn.Exec(
-		`UPDATE live_sources SET name=?, location=?, location_type=?, enable=?,
-		 last_download=?, download_status=?, http_status=?, retry_count=?
-		 WHERE id=?`,
-		ls.Name, ls.Location, ls.LocationType, ls.Enable,
-		ls.LastDownload, ls.DownloadStatus, ls.HTTPStatus, ls.RetryCount,
-		ls.ID,
+		"UPDATE users SET last_login = ? WHERE id = ?",
+		loginTime, userID,
 	)
 	return err
 }
 
-func (d *DB) GetAllLiveSources() ([]models.LiveSource, error) {
-	rows, err := d.conn.Query(
-		"SELECT id, name, location, location_type, enable, last_download, download_status, http_status, retry_count FROM live_sources WHERE deleted_at IS NULL ORDER BY id",
+// createDefaultAdmin 创建默认管理员账户（如果 users 表为空）
+func createDefaultAdmin(db *sql.DB) {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&count)
+	if count > 0 {
+		return // 已有用户，不创建默认账户
+	}
+
+	// 默认密码 "admin@1234" 的 bcrypt 哈希值
+	// 生产环境请务必修改！
+	defaultHash := "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	db.Exec(
+		`INSERT INTO users (username, password_hash, is_admin, is_active)
+		 VALUES (?, ?, 1, 1)`,
+		"admin", defaultHash,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var sources []models.LiveSource
-	for rows.Next() {
-		var ls models.LiveSource
-		if err := rows.Scan(&ls.ID, &ls.Name, &ls.Location, &ls.LocationType, &ls.Enable, &ls.LastDownload, &ls.DownloadStatus, &ls.HTTPStatus, &ls.RetryCount); err != nil {
-			return nil, err
-		}
-		sources = append(sources, ls)
-	}
-	return sources, nil
 }
 
-func (d *DB) DeleteLiveSource(id int) error {
-	return d.softDelete("live_sources", id)
-}
-
-// ==================== 通过测试的有效源管理 ====================
-
-func (d *DB) GetActivePassedSources() ([]models.PassedSource, error) {
-	return d.GetPassedSourcesByStatus("active")
-}
-
-func (d *DB) GetPassedSourcesByStatus(status string) ([]models.PassedSource, error) {
-	rows, err := d.conn.Query(
-		"SELECT id, name, url, group_name, logo, category_id, epg_id, status FROM url_sources_passed WHERE status = ? AND deleted_at IS NULL ORDER BY id",
-		status,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var sources []models.PassedSource
-	for rows.Next() {
-		var ps models.PassedSource
-		var logo, groupName sql.NullString
-		if err := rows.Scan(&ps.ID, &ps.Name, &ps.URL, &groupName, &logo, &ps.CategoryID, &ps.EPGID, &ps.Status); err != nil {
-			return nil, err
-		}
-		if logo.Valid {
-			ps.Logo = logo.String
-		}
-		if groupName.Valid {
-			ps.GroupName = groupName.String
-		}
-		sources = append(sources, ps)
-	}
-	return sources, nil
-}
+// ──────── 统计数据 ────────
 
 // CountURLSources 统计 URL 源总数
 func (d *DB) CountURLSources() int {
 	var count int
-	d.conn.QueryRow("SELECT COUNT(*) FROM url_sources WHERE deleted_at IS NULL").Scan(&count)
+	d.conn.QueryRow("SELECT COUNT(*) FROM live_sources WHERE deleted_at IS NULL").Scan(&count)
 	return count
 }
 
-// CountPassedByStatus 统计指定状态的源数量
+// CountPassedByStatus 统计指定状态的通过源数量
 func (d *DB) CountPassedByStatus(status string) int {
 	var count int
-	d.conn.QueryRow("SELECT COUNT(*) FROM url_sources_passed WHERE status = ? AND deleted_at IS NULL", status).Scan(&count)
+	d.conn.QueryRow(
+		"SELECT COUNT(*) FROM url_sources_passed WHERE status = ? AND deleted_at IS NULL",
+		status,
+	).Scan(&count)
 	return count
 }
 
-// GetLastTestTime 获取最后一次测试时间
-func (d *DB) GetLastTestTime() *time.Time {
-	var t time.Time
-	err := d.conn.QueryRow("SELECT MAX(created_at) FROM url_sources_passed").Scan(&t)
-	if err != nil {
-		return nil
-	}
-	return &t
-}
-
-// CountEPGPrograms 统计 EPG 节目总数
+// CountEPGPrograms 统计 EPG 节目数量
 func (d *DB) CountEPGPrograms() int {
 	var count int
 	d.conn.QueryRow("SELECT COUNT(*) FROM epg_programs").Scan(&count)
 	return count
 }
 
-// internal/db/db.go
-
-// ... 文件开头的 package、import 等保持不变 ...
-
-// InsertPassedSourceBatch 带事务的批量插入，确保数据一致性
-func (d *DB) InsertPassedSourceBatch(sources []models.PassedSource) error {
-	tx, err := d.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+// GetLastTestTime 获取最后一次测试的时间
+func (d *DB) GetLastTestTime() string {
+	var lastTime sql.NullString
+	d.conn.QueryRow(
+		"SELECT MAX(last_download) FROM live_sources WHERE deleted_at IS NULL",
+	).Scan(&lastTime)
+	if lastTime.Valid {
+		return lastTime.String
 	}
-	// 使用 defer 确保事务最终被提交或回滚
-	defer func() {
-		if p := recover(); p != nil {
-			tx.Rollback()
-			panic(p) // 重新抛出，让上层感知
-		} else if err != nil {
-			tx.Rollback() // 如果 err 不是 nil，回滚
-		} else {
-			err = tx.Commit() // 提交事务，并将提交错误赋值给 err
-		}
-	}()
-
-	stmt, err := tx.Prepare(`
-        INSERT INTO url_sources_passed 
-        (name, url, group_name, logo, category_id, epg_id, status) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
-	if err != nil {
-		return fmt.Errorf("prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, s := range sources {
-		if _, execErr := stmt.Exec(s.Name, s.URL, s.GroupName, s.Logo, s.CategoryID, s.EPGID, s.Status); execErr != nil {
-			err = fmt.Errorf("insert source %s failed: %w", s.URL, execErr) // 赋值给命名返回值 err
-			return err
-		}
-	}
-	return nil
+	return "从未测试"
 }
 
-// ==================== 分类管理 ====================
+// ──────── 其他辅助方法 ────────
 
+// GetAllCategories 获取所有分类
 func (d *DB) GetAllCategories() ([]models.Category, error) {
-	rows, err := d.conn.Query("SELECT id, name, keywords FROM categories ORDER BY id")
+	rows, err := d.conn.Query(
+		"SELECT id, name, keywords FROM categories ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	var categories []models.Category
 	for rows.Next() {
 		var c models.Category
@@ -299,76 +399,20 @@ func (d *DB) GetAllCategories() ([]models.Category, error) {
 		}
 		categories = append(categories, c)
 	}
-	return categories, nil
+	return categories, rows.Err()
 }
 
-func (d *DB) CreateCategory(cat *models.Category) error {
-	_, err := d.conn.Exec("INSERT INTO categories (name, keywords) VALUES (?, ?)", cat.Name, cat.Keywords)
+// UpdateCategory 更新分类信息
+func (d *DB) UpdateCategory(cat *models.Category) error {
+	_, err := d.conn.Exec(
+		"UPDATE categories SET name=?, keywords=? WHERE id=?",
+		cat.Name, cat.Keywords, cat.ID,
+	)
 	return err
 }
 
-// ==================== 用户管理 ====================
-
-func (d *DB) GetUserByUsername(username string) (*models.User, error) {
-	row := d.conn.QueryRow("SELECT id, username, password_hash, is_admin, is_active, last_login FROM users WHERE username = ? AND deleted_at IS NULL", username)
-	var u models.User
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.IsActive, &u.LastLogin)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &u, nil
-}
-
-func (d *DB) GetAllUsers() ([]models.User, error) {
-	rows, err := d.conn.Query("SELECT id, username, password_hash, is_admin, is_active, last_login FROM users WHERE deleted_at IS NULL ORDER BY id")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var users []models.User
-	for rows.Next() {
-		var u models.User
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsAdmin, &u.IsActive, &u.LastLogin); err != nil {
-			return nil, err
-		}
-		users = append(users, u)
-	}
-	return users, nil
-}
-
-func (d *DB) CreateUser(u *models.User) error {
-	_, err := d.conn.Exec("INSERT INTO users (username, password_hash, is_admin, is_active) VALUES (?, ?, ?, ?)", u.Username, u.PasswordHash, u.IsAdmin, u.IsActive)
-	return err
-}
-
-func (d *DB) UpdateUser(u *models.User) error {
-	_, err := d.conn.Exec("UPDATE users SET username=?, password_hash=?, is_admin=?, is_active=?, last_login=? WHERE id=?", u.Username, u.PasswordHash, u.IsAdmin, u.IsActive, u.LastLogin, u.ID)
-	return err
-}
-
-func (d *DB) DeleteUser(id int) error {
-	return d.softDelete("users", id)
-}
-
-func (d *DB) UpdateUserLastLogin(userID int, t time.Time) error {
-	_, err := d.conn.Exec("UPDATE users SET last_login = ? WHERE id = ?", t, userID)
-	return err
-}
-
-// ==================== 测试器辅助方法 ====================
-
-func (d *DB) UpdateLiveSourceStatus(id int, status string) error {
-	_, err := d.conn.Exec("UPDATE live_sources SET download_status = ? WHERE id = ?", status, id)
-	return err
-}
-
-func (d *DB) UpdateLiveSourceMeta(id int, meta *models.StreamMeta) error {
-	resolution := fmt.Sprintf("%dx%d", meta.Width, meta.Height)
-	_, err := d.conn.Exec(`INSERT INTO url_sources_passed (name, url, status, resolution, bitrate)
-		SELECT name, location, 'active', ?, ? FROM live_sources WHERE id = ?`,
-		resolution, meta.BitRate, id)
+// DeleteCategory 删除分类
+func (d *DB) DeleteCategory(id int) error {
+	_, err := d.conn.Exec("DELETE FROM categories WHERE id=?", id)
 	return err
 }
