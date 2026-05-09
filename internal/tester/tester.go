@@ -170,13 +170,13 @@ func (t *Tester) testSingle(ctx context.Context, s *models.Source) *StreamResult
 
 	// 构建 ffprobe 命令参数
 	args := []string{
-		"-v", "quiet",                // 只输出错误信息
-		"-print_format", "json",      // 输出 JSON 格式
-		"-show_format",               // 容器格式信息
-		"-show_streams",              // 流信息
-		"-select_streams", "v",       // 只探测视频流
+		"-v", "quiet", // 只输出错误信息
+		"-print_format", "json", // 输出 JSON 格式
+		"-show_format",         // 容器格式信息
+		"-show_streams",        // 流信息
+		"-select_streams", "v", // 只探测视频流
 		"-timeout", strconv.FormatInt(t.timeout.Milliseconds(), 10), // 微秒级超时
-		"-i", s.URL,                  // 输入 URL
+		"-i", s.URL, // 输入 URL
 	}
 
 	// 为单次测试创建独立的超时 context
