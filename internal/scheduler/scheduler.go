@@ -11,9 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"live-source-manager-go/internal/config"
 	"live-source-manager-go/pkg/logger"
+
+	"github.com/robfig/cron/v3"
 )
 
 // TaskFunc 定义调度任务的函数类型，返回可能的错误。
@@ -23,7 +24,7 @@ type TaskFunc func(ctx context.Context) error
 type Manager struct {
 	cfg      *config.Config
 	cron     *cron.Cron
-	lockPath string       // 分布式锁文件路径
+	lockPath string // 分布式锁文件路径
 	taskFn   TaskFunc
 	mu       sync.Mutex
 	entryID  cron.EntryID

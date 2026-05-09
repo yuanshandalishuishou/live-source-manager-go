@@ -7,7 +7,6 @@ package scheduler
 
 import (
 	"os"
-	"syscall"
 
 	"golang.org/x/sys/windows"
 )
