@@ -1,150 +1,220 @@
+// internal/config/config.go
+// 全局配置管理：从 INI 文件加载配置，支持环境变量覆盖和默认值回退。
+// 配置结构体分为多个节 (section)，对应 ini 文件中的各配置块。
 package config
 
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"gopkg.in/ini.v1"
 )
 
-// Config 聚合所有配置项
+// Config 汇总所有配置节
 type Config struct {
-	WebServer struct {
-		Port             int      `ini:"port"`
-		JWTSecret        string   `ini:"jwt_secret"`
-		TokenExpireHours int      `ini:"token_expire_hours"`
-		RateLimit        float64  `ini:"rate_limit"`
-		RateBurst        int      `ini:"rate_burst"`
-		AllowedOrigins   []string `ini:"-"` // 特殊处理
-	} `ini:"WebServer"`
-	Network struct {
-		ProxyEnabled bool   `ini:"proxy_enabled"`
-		ProxyURL     string `ini:"proxy_url"`
-	} `ini:"Network"`
-	Testing struct {
-		Timeout           int    `ini:"timeout"`
-		ConcurrentThreads int    `ini:"concurrent_threads"`
-		BatchSize         int    `ini:"batch_size"`
-		FlushInterval     int    `ini:"flush_interval"`
-		FfmpegPath        string `ini:"ffmpeg_path"`
-		RecheckInterval   int    `ini:"recheck_interval"` // 小时
-		MaxTestBatch      int    `ini:"max_test_batch"`
-	} `ini:"Testing"`
-	Output struct {
-		Directory string `ini:"directory"`
-		Filename  string `ini:"filename"`
-	} `ini:"Output"`
-	Filter struct {
-		MaxLatency       int    `ini:"max_latency"`
-		MinBitrate       int    `ini:"min_bitrate"`
-		MinResolution    string `ini:"min_resolution"`
-		MaxResolution    string `ini:"max_resolution"`
-		Location         string `ini:"location"`
-		ISP              string `ini:"isp"`
-		OriginTypePrefer string `ini:"origin_type_prefer"`
-	} `ini:"Filter"`
-	RTMP struct {
-		OpenRTMP       bool   `ini:"open_rtmp"`
-		NginxHTTPPort  int    `ini:"nginx_http_port"`
-		NginxRTMPPort  int    `ini:"nginx_rtmp_port"`
-		IdleTimeout    int    `ini:"idle_timeout"`
-		MaxStreams     int    `ini:"max_streams"`
-		TranscodeMode  string `ini:"transcode_mode"`
-		RetryMax       int    `ini:"retry_max"`
-		RetryBaseDelay int    `ini:"retry_base_delay"`
-		FfmpegPath     string `ini:"ffmpeg_path"`
-	} `ini:"RTMP"`
-	EPG struct {
-		UpdateInterval int  `ini:"update_interval"`
-		RetentionDays  int  `ini:"retention_days"`
-		IncludeEPGURL  bool `ini:"include_epg_url"`
-	} `ini:"EPG"`
-	System struct {
-		AdminUsername string `ini:"admin_username"`
-		LockFile      string `ini:"lock_file"`
-	} `ini:"System"`
+	Server      ServerConfig
+	Database    DatabaseConfig
+	Collector   CollectorConfig
+	Tester      TesterConfig
+	SubScriber  SubScriberConfig // 注意拼写与项目保持一致，或按需调整
+	Classifier  ClassifierConfig
+	Generator   GeneratorConfig
+	RTMP        RTMPConfig
+	EPG         EPGConfig
+	Output      OutputConfig
+	Scheduler   SchedulerConfig
+	Downloader  DownloaderConfig
 }
 
-// LoadConfig 加载配置：先读取默认值，再覆盖 ini 文件，最后覆盖环境变量
-func LoadConfig(configPath string) (*Config, error) {
+// ServerConfig Web 服务配置
+type ServerConfig struct {
+	Port     int    `ini:"port"`
+	JWTSecret string `ini:"jwt_secret"`
+	Debug    bool   `ini:"debug"`
+}
+
+// DatabaseConfig 数据库连接配置
+type DatabaseConfig struct {
+	Path string `ini:"path"`
+}
+
+// CollectorConfig 数据采集器配置
+type CollectorConfig struct {
+	SubscriptionURLs []string // 由多个 ini 键组合而成，Load 时手动解析
+	IntervalMinutes  int      `ini:"interval_minutes"`
+}
+
+// TesterConfig 流测试器配置
+type TesterConfig struct {
+	Timeout     int    `ini:"timeout"`
+	Concurrency int    `ini:"concurrency"`
+	FfprobePath string `ini:"ffprobe_path"`
+}
+
+// SubScriberConfig 订阅管理器配置
+type SubScriberConfig struct {
+	Enable bool `ini:"enable"`
+}
+
+// ClassifierConfig 分类器配置
+type ClassifierConfig struct {
+	RulesFile string `ini:"rules_file"`
+}
+
+// GeneratorConfig M3U 生成器配置
+type GeneratorConfig struct {
+	Template string `ini:"template"`
+}
+
+// RTMPConfig RTMP 推流配置
+type RTMPConfig struct {
+	Enable    bool   `ini:"enable"`
+	ServerURL string `ini:"server_url"`
+}
+
+// EPGConfig EPG 电子节目单配置
+type EPGConfig struct {
+	Enable    bool   `ini:"enable"`
+	SourceURL string `ini:"source_url"`
+}
+
+// OutputConfig 输出路径配置
+type OutputConfig struct {
+	Directory string `ini:"directory"`
+}
+
+// SchedulerConfig 调度器配置
+type SchedulerConfig struct {
+	Enabled bool   `ini:"enabled"`
+	Cron    string `ini:"cron"`
+}
+
+// DownloaderConfig 数据库下载器配置
+type DownloaderConfig struct {
+	DatabaseURL string `ini:"database_url"`
+}
+
+// Load 从指定路径加载 INI 配置文件，并覆盖环境变量中的同名配置。
+// 未设置的字段将使用合理的默认值。
+func Load(path string) (*Config, error) {
 	cfg := &Config{}
+
+	// 设置默认值
 	setDefaults(cfg)
 
-	// 如果指定了配置文件，加载并映射
-	if configPath != "" {
-		if err := loadIniFile(cfg, configPath); err != nil {
-			return nil, fmt.Errorf("加载配置文件失败: %w", err)
-		}
+	// 如果文件不存在，则使用默认值（不影响）
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		fmt.Printf("配置文件 %s 不存在，使用默认配置\n", path)
+		return cfg, nil
+	}
+
+	iniFile, err := ini.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("加载配置文件失败: %w", err)
+	}
+
+	// 映射各节
+	if err := iniFile.Section("server").MapTo(&cfg.Server); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("database").MapTo(&cfg.Database); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("collector").MapTo(&cfg.Collector); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("tester").MapTo(&cfg.Tester); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("subscriber").MapTo(&cfg.SubScriber); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("classifier").MapTo(&cfg.Classifier); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("generator").MapTo(&cfg.Generator); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("rtmp").MapTo(&cfg.RTMP); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("epg").MapTo(&cfg.EPG); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("output").MapTo(&cfg.Output); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("scheduler").MapTo(&cfg.Scheduler); err != nil {
+		return nil, err
+	}
+	if err := iniFile.Section("downloader").MapTo(&cfg.Downloader); err != nil {
+		return nil, err
+	}
+
+	// 处理 Collector 中多个订阅源的特殊逻辑
+	// 支持 subscription_url = url1,url2,url3 或 subscription_url_0, subscription_url_1 ...
+	subURLs := iniFile.Section("collector").Key("subscription_url").String()
+	if subURLs != "" {
+		cfg.Collector.SubscriptionURLs = strings.Split(subURLs, ",")
 	} else {
-		// 尝试默认路径
-		defaultPaths := []string{"/config/config.ini", "./config/config.ini", "config.ini"}
-		for _, p := range defaultPaths {
-			if _, err := os.Stat(p); err == nil {
-				if err := loadIniFile(cfg, p); err == nil {
-					break
-				}
+		// 备用：读取连续编号的键
+		var urls []string
+		for i := 0; ; i++ {
+			key := fmt.Sprintf("subscription_url_%d", i)
+			val := iniFile.Section("collector").Key(key).String()
+			if val == "" {
+				break
 			}
+			urls = append(urls, val)
+		}
+		if len(urls) > 0 {
+			cfg.Collector.SubscriptionURLs = urls
 		}
 	}
-	// 环境变量覆盖
+
+	// 环境变量覆盖（优先级最高）
 	applyEnvOverrides(cfg)
+
 	return cfg, nil
 }
 
+// setDefaults 设置所有字段的默认值
 func setDefaults(cfg *Config) {
-	cfg.WebServer.Port = 23456
-	cfg.WebServer.TokenExpireHours = 24
-	cfg.WebServer.RateLimit = 10
-	cfg.WebServer.RateBurst = 20
-	cfg.WebServer.AllowedOrigins = []string{"*"}
-	cfg.Testing.Timeout = 10
-	cfg.Testing.ConcurrentThreads = 30
-	cfg.Testing.BatchSize = 50
-	cfg.Testing.FlushInterval = 2
-	cfg.Testing.FfmpegPath = "ffmpeg"
-	cfg.Testing.RecheckInterval = 24
-	cfg.Testing.MaxTestBatch = 2000
-	cfg.Output.Directory = "/www/output"
-	cfg.Output.Filename = "live.m3u"
-	cfg.EPG.UpdateInterval = 12
-	cfg.EPG.RetentionDays = 7
-	cfg.RTMP.IdleTimeout = 300
-	cfg.RTMP.MaxStreams = 5
-	cfg.RTMP.RetryMax = 3
-	cfg.RTMP.RetryBaseDelay = 5
-	cfg.RTMP.TranscodeMode = "copy"
-	// ... 其他默认值
+	cfg.Server.Port = 8080
+	cfg.Server.Debug = false
+	cfg.Database.Path = "data.db"
+	cfg.Collector.IntervalMinutes = 240
+	cfg.Tester.Timeout = 30000 // 毫秒
+	cfg.Tester.Concurrency = 10
+	cfg.Tester.FfprobePath = "ffprobe"
+	cfg.SubScriber.Enable = true
+	cfg.Output.Directory = "output"
+	cfg.Scheduler.Enabled = true
+	cfg.Scheduler.Cron = "0 0 */2 * * *" // 每2小时
 }
 
-func loadIniFile(cfg *Config, path string) error {
-	iniFile, err := ini.Load(path)
-	if err != nil {
-		return err
-	}
-	// 映射到结构体
-	if err := iniFile.MapTo(cfg); err != nil {
-		return err
-	}
-	// 处理特殊字段：allowed_origins（逗号分隔字符串）
-	origins := iniFile.Section("WebServer").Key("allowed_origins").String()
-	if origins != "" {
-		cfg.WebServer.AllowedOrigins = strings.Split(origins, ",")
-	}
-	return nil
-}
-
+// applyEnvOverrides 用环境变量覆盖配置值（前缀为 LSM_）
 func applyEnvOverrides(cfg *Config) {
-	// 覆盖 WebServer 配置
-	if v := os.Getenv("JWT_SECRET"); v != "" {
-		cfg.WebServer.JWTSecret = v
+	if v := os.Getenv("LSM_SERVER_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Port = p
+		}
 	}
-	if v := os.Getenv("PORT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.WebServer.Port)
+	if v := os.Getenv("LSM_DB_PATH"); v != "" {
+		cfg.Database.Path = v
 	}
-	if v := os.Getenv("FFMPEG_PATH"); v != "" {
-		cfg.Testing.FfmpegPath = v
-		cfg.RTMP.FfmpegPath = v
+	if v := os.Getenv("LSM_TESTER_CONCURRENCY"); v != "" {
+		if c, err := strconv.Atoi(v); err == nil {
+			cfg.Tester.Concurrency = c
+		}
 	}
-	// 其他环境变量覆盖...
+	if v := os.Getenv("LSM_OUTPUT_DIR"); v != "" {
+		cfg.Output.Directory = v
+	}
+	if v := os.Getenv("LSM_SCHEDULER_CRON"); v != "" {
+		cfg.Scheduler.Cron = v
+	}
+	// 更多环境变量可按需添加
 }
