@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -215,13 +216,13 @@ func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		// 返回当前配置的敏感信息过滤版
 		safeCfg := map[string]interface{}{
-			"server":      h.cfg.Server,
-			"tester":      h.cfg.Tester,
-			"collector":   h.cfg.Collector,
-			"output":      h.cfg.Output,
-			"scheduler":   h.cfg.Scheduler,
-			"rtmp":        h.cfg.RTMP,
-			"epg":         h.cfg.EPG,
+			"server":    h.cfg.Server,
+			"tester":    h.cfg.Tester,
+			"collector": h.cfg.Collector,
+			"output":    h.cfg.Output,
+			"scheduler": h.cfg.Scheduler,
+			"rtmp":      h.cfg.RTMP,
+			"epg":       h.cfg.EPG,
 		}
 		respondJSON(w, http.StatusOK, safeCfg)
 
