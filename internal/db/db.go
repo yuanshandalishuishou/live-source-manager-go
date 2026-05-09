@@ -243,38 +243,44 @@ func (d *DB) CountEPGPrograms() int {
 	return count
 }
 
-// 【重塑】带事务的批量插入，确保数据一致性
+// internal/db/db.go
+
+// ... 文件开头的 package、import 等保持不变 ...
+
+// InsertPassedSourceBatch 带事务的批量插入，确保数据一致性
 func (d *DB) InsertPassedSourceBatch(sources []models.PassedSource) error {
 	tx, err := d.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
+	// 使用 defer 确保事务最终被提交或回滚
 	defer func() {
 		if p := recover(); p != nil {
 			tx.Rollback()
-			panic(p)
+			panic(p) // 重新抛出，让上层感知
 		} else if err != nil {
-			tx.Rollback()
+			tx.Rollback() // 如果 err 不是 nil，回滚
 		} else {
-			err = tx.Commit()
+			err = tx.Commit() // 提交事务，并将提交错误赋值给 err
 		}
 	}()
 
-	stmt, err := tx.Prepare(
-		`INSERT INTO url_sources_passed (name, url, group_name, logo, category_id, epg_id, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`
+        INSERT INTO url_sources_passed 
+        (name, url, group_name, logo, category_id, epg_id, status) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
 	if err != nil {
 		return fmt.Errorf("prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
 	for _, s := range sources {
-		if _, err := stmt.Exec(s.Name, s.URL, s.GroupName, s.Logo, s.CategoryID, s.EPGID, s.Status); err != nil {
-			logger.Error("批量插入源失败: %v", err)
-			return fmt.Errorf("insert %s: %w", s.URL, err)
+		if _, execErr := stmt.Exec(s.Name, s.URL, s.GroupName, s.Logo, s.CategoryID, s.EPGID, s.Status); execErr != nil {
+			err = fmt.Errorf("insert source %s failed: %w", s.URL, execErr) // 赋值给命名返回值 err
+			return err
 		}
 	}
-
 	return nil
 }
 
