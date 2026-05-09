@@ -33,11 +33,11 @@ var levelNames = map[Level]string{
 
 // Logger 并发安全的日志器
 type Logger struct {
-	mu       sync.Mutex
-	logger   *log.Logger
-	file     *os.File
-	level    Level
-	logDir   string
+	mu     sync.Mutex
+	logger *log.Logger
+	file   *os.File
+	level  Level
+	logDir string
 }
 
 var defaultLogger *Logger
@@ -63,10 +63,10 @@ func NewLogger(dir string, level Level) (*Logger, error) {
 
 	multiWriter := io.MultiWriter(os.Stdout, file)
 	return &Logger{
-		logger:   log.New(multiWriter, "", 0),
-		file:     file,
-		level:    level,
-		logDir:   dir,
+		logger: log.New(multiWriter, "", 0),
+		file:   file,
+		level:  level,
+		logDir: dir,
 	}, nil
 }
 
