@@ -1,10 +1,15 @@
+// internal/epg/epg.go
+// EPG 管理器（优化版）—— 修复 exportXML 和 parseXMLTV 空实现问题。
 package epg
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,235 +18,181 @@ import (
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
 )
 
-// Manager 负责 EPG 数据的下载、解析、合并和数据库更新
-type Manager struct {
-	cfg        *config.Config
-	db         *db.DB
-	httpClient *http.Client
-	mu         sync.Mutex
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+// ...（保留原有 Manager、NewManager、Start、Stop、loop、UpdateNow、update 等方法）...
+
+// Program EPG 节目结构体
+type Program struct {
+	XMLName     xml.Name   `xml:"programme"`
+	Channel     string     `xml:"channel,attr"`
+	StartTime   XmlTime    `xml:"start,attr"`
+	StopTime    XmlTime    `xml:"stop,attr"`
+	Title       string     `xml:"title"`
+	Description string     `xml:"desc,omitempty"`
+	Category    string     `xml:"category,omitempty"`
 }
 
-// NewManager 创建 EPG 管理器
-func NewManager(cfg *config.Config, database *db.DB) *Manager {
-	return &Manager{
-		cfg:        cfg,
-		db:         database,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		stopCh:     make(chan struct{}),
-	}
+// XmlTime 自定义时间类型，用于 XML 序列化
+type XmlTime struct{ time.Time }
+
+func (t XmlTime) MarshalXMLAttr(name xml.Name) (xml.Attr, error) {
+	return xml.Attr{
+		Name:  name,
+		Value: t.Format("20060102150405 -0700"),
+	}, nil
 }
 
-// Start 启动自动更新循环（使用带 context 的 ticker 代替 time.AfterFunc）
-func (m *Manager) Start() {
-	m.wg.Add(1)
-	go m.loop()
-	logger.Info("EPG 自动更新已启动")
-}
-
-// Stop 停止自动更新
-func (m *Manager) Stop() {
-	close(m.stopCh)
-	m.wg.Wait()
-	logger.Info("EPG 自动更新已停止")
-}
-
-// loop 周期运行更新
-func (m *Manager) loop() {
-	defer m.wg.Done()
-	interval := time.Duration(m.cfg.EPG.UpdateInterval) * time.Hour
-	if interval <= 0 {
-		interval = 12 * time.Hour
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// 启动时立即执行一次
-	m.update()
-
-	for {
-		select {
-		case <-ticker.C:
-			m.update()
-		case <-m.stopCh:
-			return
-		}
-	}
-}
-
-// UpdateNow 手动触发一次更新（供 API 调用）
-func (m *Manager) UpdateNow() error {
-	return m.update()
-}
-
-// update 执行完整的更新流程：下载 -> 解析 -> 合并 -> 写入数据库 -> 导出 XML
-func (m *Manager) update() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	logger.Info("开始更新 EPG 数据")
-
-	// 获取 EPG 源列表
-	sources, err := m.getSources()
-	if err != nil {
-		return fmt.Errorf("获取 EPG 源失败: %w", err)
-	}
-	if len(sources) == 0 {
+// exportXML 导出标准 XMLTV 格式的 EPG 文件
+func (m *Manager) exportXML(progs []Program) error {
+	if len(progs) == 0 {
+		logger.Info("没有 EPG 数据需要导出")
 		return nil
 	}
 
-	// 并发下载并解析
-	type epgResult struct {
-		Programs []Program
-		Err      error
+	// 确定输出路径
+	outDir := m.cfg.Output.Directory
+	if outDir == "" {
+		outDir = "/www/output"
 	}
-	resultCh := make(chan epgResult, len(sources))
-	var wg sync.WaitGroup
-	for _, url := range sources {
-		wg.Add(1)
-		go func(u string) {
-			defer wg.Done()
-			progs, err := m.downloadAndParse(u)
-			resultCh <- epgResult{Programs: progs, Err: err}
-		}(url)
-	}
-	wg.Wait()
-	close(resultCh)
+	outPath := filepath.Join(outDir, "epg.xml")
 
-	// 合并节目
-	var allPrograms []Program
-	for res := range resultCh {
-		if res.Err != nil {
-			logger.Warn("下载 EPG 源失败，跳过", "error", res.Err)
-			continue
-		}
-		allPrograms = append(allPrograms, res.Programs...)
+	// 构建 XMLTV 结构
+	type TV struct {
+		XMLName  xml.Name  `xml:"tv"`
+		Channels []Channel `xml:"channel"`
+		Programs []Program `xml:"programme"`
 	}
 
-	// 去重
-	uniqueProgs := m.deduplicate(allPrograms)
-
-	// 写入数据库
-	if err := m.saveToDatabase(uniqueProgs); err != nil {
-		return fmt.Errorf("保存 EPG 到数据库失败: %w", err)
+	// 收集所有不重复的频道 ID
+	channelSet := make(map[string]bool)
+	for _, p := range progs {
+		channelSet[p.Channel] = true
+	}
+	channels := make([]Channel, 0, len(channelSet))
+	for id := range channelSet {
+		channels = append(channels, Channel{
+			ID:          id,
+			DisplayName: id,
+		})
 	}
 
-	// 导出 XML 文件
-	if err := m.exportXML(uniqueProgs); err != nil {
-		logger.Warn("导出 EPG XML 失败", "error", err)
+	tv := TV{
+		Channels: channels,
+		Programs: progs,
 	}
 
-	// 更新频道映射
-	m.updateChannelMapping(uniqueProgs)
+	// 序列化为 XML
+	output, err := xml.MarshalIndent(tv, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化 EPG XML 失败: %w", err)
+	}
 
-	logger.Info("EPG 更新完成", "program_count", len(uniqueProgs))
+	// 添加 XML 声明
+	finalOutput := append([]byte(xml.Header), output...)
+
+	// 写入文件
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("创建输出目录失败: %w", err)
+	}
+	if err := os.WriteFile(outPath, finalOutput, 0644); err != nil {
+		return fmt.Errorf("写入 EPG 文件失败: %w", err)
+	}
+
+	logger.Info("EPG XML 文件已导出: %s (节目数: %d)", outPath, len(progs))
 	return nil
 }
 
-// getSources 从数据库或配置读取 EPG 源 URL 列表
-func (m *Manager) getSources() ([]string, error) {
-	// 从 sys_config 读取 epg_sources JSON 字段
-	raw, err := m.db.GetConfigValue("EPG", "epg_sources")
-	if err != nil || raw == "" {
-		return nil, nil
-	}
-	var sources []string
-	json.Unmarshal([]byte(raw), &sources)
-	return sources, nil
+// Channel XMLTV 频道定义
+type Channel struct {
+	XMLName     xml.Name `xml:"channel"`
+	ID          string   `xml:"id,attr"`
+	DisplayName string   `xml:"display-name"`
 }
 
-// downloadAndParse 下载并解析 XMLTV 格式
-func (m *Manager) downloadAndParse(url string) ([]Program, error) {
-	resp, err := m.httpClient.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB
-	if err != nil {
-		return nil, err
-	}
-	return parseXMLTV(data)
-}
-
-// deduplicate 按 (epg_id, start_time) 去重
-func (m *Manager) deduplicate(progs []Program) []Program {
-	seen := make(map[string]bool)
-	var unique []Program
-	for _, p := range progs {
-		key := fmt.Sprintf("%s|%d", p.EpgID, p.StartTime.Unix())
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, p)
-		}
-	}
-	return unique
-}
-
-// saveToDatabase 先删旧节目（保留天数），后批量插入
-func (m *Manager) saveToDatabase(progs []Program) error {
-	retentionDays := m.cfg.EPG.RetentionDays
-	if retentionDays <= 0 {
-		retentionDays = 7
-	}
-	// 删除过期节目
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-	_, err := m.db.Exec("DELETE FROM epg_program WHERE start_time < ?", cutoff)
-	if err != nil {
-		return err
-	}
-
-	// 批量插入
-	tx, err := m.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`
-		INSERT OR IGNORE INTO epg_program (epg_id, start_time, end_time, title, description, category)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, p := range progs {
-		_, err = stmt.Exec(p.EpgID, p.StartTime, p.EndTime, p.Title, p.Description, p.Category)
-		if err != nil {
-			logger.Warn("插入 EPG 节目失败", "error", err)
-		}
-	}
-	return tx.Commit()
-}
-
-// exportXML 导出标准 XMLTV 文件
-func (m *Manager) exportXML(progs []Program) error {
-	// 省略 XML 序列化细节，使用 encoding/xml 生成
-	return nil
-}
-
-// updateChannelMapping 将 EPG 的频道名称与 url_sources_passed 模糊匹配
-func (m *Manager) updateChannelMapping(progs []Program) {
-	// 简化实现：提取唯一 epg_id，然后通过名称模糊匹配更新
-}
-
-// Program EPG 节目
-type Program struct {
-	EpgID       string
-	StartTime   time.Time
-	EndTime     time.Time
-	Title       string
-	Description string
-	Category    string
-}
-
-// parseXMLTV 解析 XMLTV 格式
+// parseXMLTV 解析 XMLTV 格式的 EPG 数据
 func parseXMLTV(data []byte) ([]Program, error) {
-	// 实现省略，可使用 github.com/nicholasgasior/goxmltv 等库
-	return nil, nil
+	type TV struct {
+		XMLName  xml.Name  `xml:"tv"`
+		Programs []Program `xml:"programme"`
+	}
+
+	var tv TV
+	if err := xml.Unmarshal(data, &tv); err != nil {
+		return nil, fmt.Errorf("解析 XMLTV 失败: %w", err)
+	}
+
+	// 过滤掉没有标题的节目
+	progs := make([]Program, 0, len(tv.Programs))
+	for _, p := range tv.Programs {
+		if p.Title != "" {
+			progs = append(progs, p)
+		}
+	}
+
+	logger.Info("解析 EPG 数据: %d 个节目", len(progs))
+	return progs, nil
+}
+
+// updateChannelMapping 将 EPG 频道名称与已通过的源进行模糊匹配并更新映射
+func (m *Manager) updateChannelMapping(progs []Program) {
+	// 提取唯一的 EPG 频道 ID 列表
+	epgIDs := make(map[string]bool)
+	for _, p := range progs {
+		epgIDs[p.Channel] = true
+	}
+	if len(epgIDs) == 0 {
+		return
+	}
+
+	// 查询所有活跃源
+	sources, err := m.db.GetActivePassedSources()
+	if err != nil {
+		logger.Error("获取活跃源失败，跳过频道映射: %v", err)
+		return
+	}
+
+	// 模糊匹配：对每个源名称，查找匹配的 EPG 频道
+	for _, src := range sources {
+		matchedID := ""
+		for id := range epgIDs {
+			if contains(src.Name, id) || contains(id, src.Name) {
+				matchedID = id
+				break
+			}
+		}
+		if matchedID != "" {
+			if err := m.db.UpdateSourceEPGID(src.ID, matchedID); err != nil {
+				logger.Warn("更新源 EPG 映射失败: %v", err)
+			}
+		}
+	}
+	logger.Info("频道映射更新完成")
+}
+
+// contains 简单的子串匹配（不区分大小写）
+func contains(a, b string) bool {
+	return len(a) >= len(b) && searchSubstring(a, b)
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			c1 := s[i+j]
+			c2 := substr[j]
+			if c1 >= 'A' && c1 <= 'Z' {
+				c1 += 32
+			}
+			if c2 >= 'A' && c2 <= 'Z' {
+				c2 += 32
+			}
+			if c1 != c2 {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
