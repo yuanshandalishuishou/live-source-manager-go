@@ -1,6 +1,5 @@
 // internal/config/config.go
-// 全局配置管理：从 INI 文件加载配置，支持环境变量覆盖和默认值回退。
-// 配置结构体分为多个节 (section)，对应 ini 文件中的各配置块。
+// 补全了 Filter 配置字段，并添加了 config.Save 函数以支持 Web 端配置持久化。
 package config
 
 import (
@@ -18,7 +17,7 @@ type Config struct {
 	Database   DatabaseConfig
 	Collector  CollectorConfig
 	Tester     TesterConfig
-	SubScriber SubScriberConfig // 注意拼写与项目保持一致，或按需调整
+	SubScriber SubScriberConfig
 	Classifier ClassifierConfig
 	Generator  GeneratorConfig
 	RTMP       RTMPConfig
@@ -26,6 +25,13 @@ type Config struct {
 	Output     OutputConfig
 	Scheduler  SchedulerConfig
 	Downloader DownloaderConfig
+	Filter     FilterConfig // 新增：过滤器配置
+}
+
+// FilterConfig 黑白名单过滤器配置
+type FilterConfig struct {
+	BlacklistFile string `ini:"blacklist_file"`
+	WhitelistFile string `ini:"whitelist_file"`
 }
 
 // ServerConfig Web 服务配置
@@ -42,8 +48,8 @@ type DatabaseConfig struct {
 
 // CollectorConfig 数据采集器配置
 type CollectorConfig struct {
-	SubscriptionURLs []string // 由多个 ini 键组合而成，Load 时手动解析
-	IntervalMinutes  int      `ini:"interval_minutes"`
+	SubscriptionURLs []string
+	IntervalMinutes  int `ini:"interval_minutes"`
 }
 
 // TesterConfig 流测试器配置
@@ -96,15 +102,11 @@ type DownloaderConfig struct {
 	DatabaseURL string `ini:"database_url"`
 }
 
-// Load 从指定路径加载 INI 配置文件，并覆盖环境变量中的同名配置。
-// 未设置的字段将使用合理的默认值。
+// Load 从指定路径加载 INI 配置文件
 func Load(path string) (*Config, error) {
 	cfg := &Config{}
-
-	// 设置默认值
 	setDefaults(cfg)
 
-	// 如果文件不存在，则使用默认值（不影响）
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		fmt.Printf("配置文件 %s 不存在，使用默认配置\n", path)
 		return cfg, nil
@@ -152,18 +154,18 @@ func Load(path string) (*Config, error) {
 	if err := iniFile.Section("downloader").MapTo(&cfg.Downloader); err != nil {
 		return nil, err
 	}
+	if err := iniFile.Section("filter").MapTo(&cfg.Filter); err != nil {
+		return nil, err
+	}
 
 	// 处理 Collector 中多个订阅源的特殊逻辑
-	// 支持 subscription_url = url1,url2,url3 或 subscription_url_0, subscription_url_1 ...
 	subURLs := iniFile.Section("collector").Key("subscription_url").String()
 	if subURLs != "" {
 		cfg.Collector.SubscriptionURLs = strings.Split(subURLs, ",")
 	} else {
-		// 备用：读取连续编号的键
 		var urls []string
 		for i := 0; ; i++ {
-			key := fmt.Sprintf("subscription_url_%d", i)
-			val := iniFile.Section("collector").Key(key).String()
+			val := iniFile.Section("collector").Key(fmt.Sprintf("subscription_url_%d", i)).String()
 			if val == "" {
 				break
 			}
@@ -174,28 +176,71 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// 环境变量覆盖（优先级最高）
 	applyEnvOverrides(cfg)
-
 	return cfg, nil
 }
 
-// setDefaults 设置所有字段的默认值
+// Save 将当前配置持久化到指定路径的 INI 文件
+func Save(path string, cfg *Config) error {
+	iniFile := ini.Empty()
+
+	if err := iniFile.Section("server").ReflectFrom(&cfg.Server); err != nil {
+		return err
+	}
+	if err := iniFile.Section("database").ReflectFrom(&cfg.Database); err != nil {
+		return err
+	}
+	if err := iniFile.Section("collector").ReflectFrom(&cfg.Collector); err != nil {
+		return err
+	}
+	if err := iniFile.Section("tester").ReflectFrom(&cfg.Tester); err != nil {
+		return err
+	}
+	if err := iniFile.Section("subscriber").ReflectFrom(&cfg.SubScriber); err != nil {
+		return err
+	}
+	if err := iniFile.Section("classifier").ReflectFrom(&cfg.Classifier); err != nil {
+		return err
+	}
+	if err := iniFile.Section("generator").ReflectFrom(&cfg.Generator); err != nil {
+		return err
+	}
+	if err := iniFile.Section("rtmp").ReflectFrom(&cfg.RTMP); err != nil {
+		return err
+	}
+	if err := iniFile.Section("epg").ReflectFrom(&cfg.EPG); err != nil {
+		return err
+	}
+	if err := iniFile.Section("output").ReflectFrom(&cfg.Output); err != nil {
+		return err
+	}
+	if err := iniFile.Section("scheduler").ReflectFrom(&cfg.Scheduler); err != nil {
+		return err
+	}
+	if err := iniFile.Section("downloader").ReflectFrom(&cfg.Downloader); err != nil {
+		return err
+	}
+	if err := iniFile.Section("filter").ReflectFrom(&cfg.Filter); err != nil {
+		return err
+	}
+
+	return iniFile.SaveTo(path)
+}
+
 func setDefaults(cfg *Config) {
 	cfg.Server.Port = 8080
 	cfg.Server.Debug = false
 	cfg.Database.Path = "data.db"
 	cfg.Collector.IntervalMinutes = 240
-	cfg.Tester.Timeout = 30000 // 毫秒
+	cfg.Tester.Timeout = 30000
 	cfg.Tester.Concurrency = 10
 	cfg.Tester.FfprobePath = "ffprobe"
 	cfg.SubScriber.Enable = true
 	cfg.Output.Directory = "output"
 	cfg.Scheduler.Enabled = true
-	cfg.Scheduler.Cron = "0 0 */2 * * *" // 每2小时
+	cfg.Scheduler.Cron = "0 0 */2 * * *"
 }
 
-// applyEnvOverrides 用环境变量覆盖配置值（前缀为 LSM_）
 func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("LSM_SERVER_PORT"); v != "" {
 		if p, err := strconv.Atoi(v); err == nil {
@@ -216,5 +261,4 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("LSM_SCHEDULER_CRON"); v != "" {
 		cfg.Scheduler.Cron = v
 	}
-	// 更多环境变量可按需添加
 }
