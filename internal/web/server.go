@@ -48,12 +48,12 @@ type Authenticator interface {
 
 // App 封装了整个 Web 应用所需的依赖和 Gin 引擎实例。
 type App struct {
-	cfg              *config.Config
-	engine           *gin.Engine
-	httpSrv          *http.Server
-	playlistGen      PlaylistGenerator
-	epgGen           EPGGenerator
-	authenticator    Authenticator
+	cfg           *config.Config
+	engine        *gin.Engine
+	httpSrv       *http.Server
+	playlistGen   PlaylistGenerator
+	epgGen        EPGGenerator
+	authenticator Authenticator
 }
 
 // NewApp 创建一个新的 App 实例，并完成路由注册。
@@ -62,6 +62,7 @@ type App struct {
 //   - playlistGen: M3U 播放列表生成器实现
 //   - epgGen: EPG 生成器实现
 //   - authenticator: JWT 认证器实现
+//
 // 返回初始化完毕的 App 指针。
 func NewApp(cfg *config.Config, playlistGen PlaylistGenerator, epgGen EPGGenerator, authenticator Authenticator) *App {
 	// 设置 Gin 为生产模式，关闭调试输出
@@ -70,8 +71,8 @@ func NewApp(cfg *config.Config, playlistGen PlaylistGenerator, epgGen EPGGenerat
 	engine := gin.New()
 
 	// 使用自定义中间件
-	engine.Use(gin.Logger())    // 请求日志
-	engine.Use(gin.Recovery())  // Panic 恢复
+	engine.Use(gin.Logger())     // 请求日志
+	engine.Use(gin.Recovery())   // Panic 恢复
 	engine.Use(corsMiddleware()) // 跨域支持
 
 	app := &App{
