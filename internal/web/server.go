@@ -158,12 +158,12 @@ func (app *App) handleGetSources(c *gin.Context) {
 // handleAddSource 手动添加一个直播源
 func (app *App) handleAddSource(c *gin.Context) {
 	var body struct {
-		Name        string `json:"name" binding:"required"`
-		URL         string `json:"url" binding:"required"`
-		GroupName   string `json:"group_name"`
-		Logo        string `json:"logo"`
-		CategoryID  int    `json:"category_id"`
-		EPGID       string `json:"epg_id"`
+		Name       string `json:"name" binding:"required"`
+		URL        string `json:"url" binding:"required"`
+		GroupName  string `json:"group_name"`
+		Logo       string `json:"logo"`
+		CategoryID int    `json:"category_id"`
+		EPGID      string `json:"epg_id"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "参数错误"})
@@ -238,25 +238,33 @@ func (app *App) handleLogin(c *gin.Context) {
 
 // ==================== 其余接口 (简化实现) ====================
 
-func (app *App) handlePlaylist(c *gin.Context)   { c.String(http.StatusOK, "#EXTM3U\n") }
-func (app *App) handleEPG(c *gin.Context)        { c.String(http.StatusOK, "") }
-func (app *App) handleHealth(c *gin.Context)     { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
+func (app *App) handlePlaylist(c *gin.Context) { c.String(http.StatusOK, "#EXTM3U\n") }
+func (app *App) handleEPG(c *gin.Context)      { c.String(http.StatusOK, "") }
+func (app *App) handleHealth(c *gin.Context)   { c.JSON(http.StatusOK, gin.H{"status": "ok"}) }
 
-func (app *App) handleGetSubscriptions(c *gin.Context)      { c.JSON(http.StatusOK, gin.H{"data": []interface{}{}}) }
-func (app *App) handleAddSubscription(c *gin.Context)       { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleUpdateSubscription(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleDeleteSubscription(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleGetCategories(c *gin.Context)         { c.JSON(http.StatusOK, gin.H{"data": []interface{}{}}) }
-func (app *App) handleAddCategory(c *gin.Context)           { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleUpdateCategory(c *gin.Context)        { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleDeleteCategory(c *gin.Context)        { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleGetConfig(c *gin.Context)             { c.JSON(http.StatusOK, gin.H{"data": app.cfg}) }
-func (app *App) handleUpdateConfig(c *gin.Context)          { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
-func (app *App) handleGetLogs(c *gin.Context)               { c.JSON(http.StatusOK, gin.H{"data": []string{}}) }
+func (app *App) handleGetSubscriptions(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+}
+func (app *App) handleAddSubscription(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
+func (app *App) handleUpdateSubscription(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+func (app *App) handleDeleteSubscription(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+func (app *App) handleGetCategories(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
+}
+func (app *App) handleAddCategory(c *gin.Context)    { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
+func (app *App) handleUpdateCategory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
+func (app *App) handleDeleteCategory(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
+func (app *App) handleGetConfig(c *gin.Context)      { c.JSON(http.StatusOK, gin.H{"data": app.cfg}) }
+func (app *App) handleUpdateConfig(c *gin.Context)   { c.JSON(http.StatusOK, gin.H{"message": "ok"}) }
+func (app *App) handleGetLogs(c *gin.Context)        { c.JSON(http.StatusOK, gin.H{"data": []string{}}) }
 
 // Start 启动 HTTP 服务器并支持优雅关闭
 func (app *App) Start(addr string) error {
-	app.httpSrv = &http.Server{ Addr: addr, Handler: app.engine, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second }
+	app.httpSrv = &http.Server{Addr: addr, Handler: app.engine, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
