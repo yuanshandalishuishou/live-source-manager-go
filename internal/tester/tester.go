@@ -1,5 +1,5 @@
 // internal/tester/tester.go
-// 优化后的流测试器，使用 semaphore 控制并发，避免 channel 关闭后写入问题。
+// 流测试器（安全版）—— 修复 Run 方法在上下文取消时的并发写入问题。
 package tester
 
 import (
@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"live-source-manager-go/internal/models"
-	"live-source-manager-go/pkg/logger"
+	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
+	"github.com/yuanshandalishuishou/live-source-manager-go/pkg/logger"
 )
 
 // Tester 负责对流进行 ffprobe 探测
@@ -55,13 +55,20 @@ type ffprobeOutput struct {
 	} `json:"format"`
 }
 
-// Run 并发测试一组流，并通过 resultCh 发送结果
+// Run 并发测试一组流，并通过 resultCh 发送结果。
+// [修复] 使用 WaitGroup 确保所有 goroutine 结束后再关闭 resultCh，
+// 避免在 context 取消时仍有 goroutine 尝试写入已关闭的 channel。
 func (t *Tester) Run(ctx context.Context, sources []*models.Source, resultCh chan<- *StreamResult) {
-	defer close(resultCh)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, t.concurrency) // 信号量控制并发
 
 	for _, s := range sources {
+		select {
+		case <-ctx.Done():
+			// 上下文已取消，不再启动新的测试
+			goto waitAndClose
+		default:
+		}
 		sem <- struct{}{} // 获取令牌
 		wg.Add(1)
 		go func(src *models.Source) {
@@ -69,6 +76,7 @@ func (t *Tester) Run(ctx context.Context, sources []*models.Source, resultCh cha
 			defer func() { <-sem }() // 释放令牌
 
 			res := t.testSingle(src)
+			// 使用 select 非阻塞写入，防止 ctx 取消后阻塞
 			select {
 			case resultCh <- res:
 			case <-ctx.Done():
@@ -76,7 +84,10 @@ func (t *Tester) Run(ctx context.Context, sources []*models.Source, resultCh cha
 			}
 		}(s)
 	}
+
+waitAndClose:
 	wg.Wait()
+	close(resultCh)
 }
 
 // testSingle 对单个流执行 ffprobe 检测
@@ -167,9 +178,4 @@ func parseMetadata(p *ffprobeOutput) (*models.StreamMeta, error) {
 		}
 	}
 	return meta, nil
-}
-
-// 记录错误
-func logError(err error) {
-	logger.Error("tester error: %v", err)
 }
