@@ -158,3 +158,100 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
+
+// internal/web/handlers.go (新增/补全方法)
+// 补全了订阅管理、系统配置读写、日志读取的实际数据库操作。
+
+// ---------- 订阅管理 ----------
+func (h *Handler) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		subs, err := h.db.GetAllLiveSources()
+		if err != nil {
+			respondJSON(w, http.StatusInternalServerError, "获取订阅列表失败")
+			return
+		}
+		respondJSON(w, http.StatusOK, subs)
+
+	case http.MethodPost:
+		var sub models.LiveSource
+		if err := json.NewDecoder(r.Body).Decode(&sub); err != nil {
+			respondJSON(w, http.StatusBadRequest, "请求格式错误")
+			return
+		}
+		if err := h.db.CreateLiveSource(&sub); err != nil {
+			respondJSON(w, http.StatusInternalServerError, "创建订阅失败")
+			return
+		}
+		respondJSON(w, http.StatusOK, "订阅创建成功")
+
+	case http.MethodPut:
+		id, _ := strconv.Atoi(r.URL.Query().Get("id"))
+		var sub models.LiveSource
+		if err := json.NewDecoder(r.Body).Decode(&sub); err != nil {
+			respondJSON(w, http.StatusBadRequest, "请求格式错误")
+			return
+		}
+		sub.ID = id
+		if err := h.db.UpdateLiveSource(&sub); err != nil {
+			respondJSON(w, http.StatusInternalServerError, "更新订阅失败")
+			return
+		}
+		respondJSON(w, http.StatusOK, "订阅已更新")
+
+	case http.MethodDelete:
+		id, _ := strconv.Atoi(r.URL.Query().Get("id"))
+		if err := h.db.DeleteLiveSource(id); err != nil {
+			respondJSON(w, http.StatusInternalServerError, "删除订阅失败")
+			return
+		}
+		respondJSON(w, http.StatusOK, "订阅已删除")
+	}
+}
+
+// ---------- 系统配置读写 ----------
+func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// 返回当前配置的敏感信息过滤版
+		safeCfg := map[string]interface{}{
+			"server":      h.cfg.Server,
+			"tester":      h.cfg.Tester,
+			"collector":   h.cfg.Collector,
+			"output":      h.cfg.Output,
+			"scheduler":   h.cfg.Scheduler,
+			"rtmp":        h.cfg.RTMP,
+			"epg":         h.cfg.EPG,
+		}
+		respondJSON(w, http.StatusOK, safeCfg)
+
+	case http.MethodPut:
+		var newCfg config.Config
+		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+			respondJSON(w, http.StatusBadRequest, "配置格式错误")
+			return
+		}
+		// 持久化配置（需实现 config.Save 方法）
+		if err := config.Save("config.ini", &newCfg); err != nil {
+			respondJSON(w, http.StatusInternalServerError, "保存配置失败")
+			return
+		}
+		*h.cfg = newCfg
+		respondJSON(w, http.StatusOK, "配置已更新")
+	}
+}
+
+// ---------- 日志查看 ----------
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+	level := r.URL.Query().Get("level")
+	lines := 200 // 默认返回最近 200 行
+	if n, err := strconv.Atoi(r.URL.Query().Get("lines")); err == nil {
+		lines = n
+	}
+	logEntries, err := logger.ReadRecentLogs(lines, level)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, "读取日志失败")
+		return
+	}
+	respondJSON(w, http.StatusOK, logEntries)
+}
