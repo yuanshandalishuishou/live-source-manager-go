@@ -1,131 +1,124 @@
-// internal/rtmp/rtmp.go
-// 优化后的 RTMP 推流管理，通过 context 实现优雅关闭和资源清理。
+// internal/rtmp/manager.go
 package rtmp
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"sync"
-	"time"
+    "context"
+    "fmt"
+    "os/exec"
+    "sync"
+    "syscall"
 
-	"live-source-manager-go/pkg/logger"
+    "live-source-manager-go/internal/config"
+    "live-source-manager-go/internal/models"
+    "live-source-manager-go/pkg/logger"
 )
 
-// Stream 表示一个推流实例
-type Stream struct {
-	ID       string
-	InputURL string
-	OutputID string
+// Manager 管理 RTMP 推流任务
+type Manager struct {
+    ctx     context.Context
+    cfg     *config.Config
+    mu      sync.Mutex
+    streams map[string]*streamTask // key: 推流名称
 }
 
-// Manager 管理所有推流进程
-type Manager struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	streams map[string]*exec.Cmd
-	mu      sync.RWMutex
+type streamTask struct {
+    cmd    *exec.Cmd
+    cancel context.CancelFunc
 }
 
 // NewManager 创建 RTMP 管理器
-func NewManager(parent context.Context) *Manager {
-	ctx, cancel := context.WithCancel(parent)
-	return &Manager{
-		ctx:     ctx,
-		cancel:  cancel,
-		streams: make(map[string]*exec.Cmd),
-	}
+func NewManager(ctx context.Context, cfg *config.Config) *Manager {
+    return &Manager{
+        ctx:     ctx,
+        cfg:     cfg,
+        streams: make(map[string]*streamTask),
+    }
 }
 
-// StartStream 启动 ffmpeg 推流
-func (m *Manager) StartStream(streamID, inputURL, outputURL string) error {
-	select {
-	case <-m.ctx.Done():
-		return fmt.Errorf("rtmp manager is shutting down")
-	default:
-	}
+// Reload 根据新的源列表重新加载推流任务
+func (m *Manager) Reload(sources []models.PassedSource) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
 
-	args := []string{
-		"-i", inputURL,
-		"-c", "copy",
-		"-f", "flv",
-		"-flvflags", "no_duration_filesize",
-		outputURL,
-	}
-	cmd := exec.CommandContext(m.ctx, "ffmpeg", args...)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
-	}
+    // 停止所有旧流
+    m.stopAllLocked()
 
-	m.mu.Lock()
-	m.streams[streamID] = cmd
-	m.mu.Unlock()
+    if !m.cfg.RTMP.Enable {
+        return nil
+    }
 
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		err := cmd.Wait()
-		// 进程退出时通知 manager 清理
-		m.mu.Lock()
-		delete(m.streams, streamID)
-		m.mu.Unlock()
-		if err != nil {
-			logger.Warn("rtmp stream %s exited with error: %v", streamID, err)
-		} else {
-			logger.Info("rtmp stream %s finished", streamID)
-		}
-	}()
+    // 启动新流
+    for _, src := range sources {
+        if src.URL == "" {
+            continue
+        }
+        key := fmt.Sprintf("%s-%s", src.Name, src.URL)
+        if err := m.startStreamLocked(src.Name, src.URL); err != nil {
+            logger.Error("启动 RTMP 推流失败 [%s]: %v", key, err)
+        }
+    }
 
-	return nil
+    logger.Info("RTMP 推流已更新，当前推流数: %d", len(m.streams))
+    return nil
 }
 
-// StopStream 停止指定推流
-func (m *Manager) StopStream(streamID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	cmd, ok := m.streams[streamID]
-	if !ok {
-		return fmt.Errorf("stream %s not found", streamID)
-	}
-	if err := cmd.Process.Kill(); err != nil {
-		return fmt.Errorf("kill stream %s: %w", streamID, err)
-	}
-	// 清理将由 goroutine 中的 Wait 完成，此处仅负责发送信号
-	return nil
+func (m *Manager) stopAllLocked() {
+    for name, t := range m.streams {
+        t.cancel()
+        if t.cmd != nil && t.cmd.Process != nil {
+            t.cmd.Process.Signal(syscall.SIGTERM)
+        }
+        delete(m.streams, name)
+    }
 }
 
-// Shutdown 优雅关闭所有推流
-func (m *Manager) Shutdown(timeout time.Duration) error {
-	m.cancel()
-	// 发送 SIGTERM 信号给所有子进程
-	m.mu.RLock()
-	for id, cmd := range m.streams {
-		if err := cmd.Process.Signal(os.Interrupt); err != nil {
-			logger.Warn("failed to interrupt stream %s: %v", id, err)
-		}
-	}
-	m.mu.RUnlock()
+// startStreamLocked 启动一个推流任务，调用 ffmpeg
+func (m *Manager) startStreamLocked(name, sourceURL string) error {
+    streamCtx, cancel := context.WithCancel(m.ctx)
 
-	// 等待 goroutine 全部退出或超时
-	done := make(chan struct{})
-	go func() {
-		m.wg.Wait()
-		close(done)
-	}()
+    args := []string{
+        "-re",
+        "-i", sourceURL,
+        "-c", "copy",
+        "-f", "flv",
+        fmt.Sprintf("%s/%s", m.cfg.RTMP.ServerURL, name),
+    }
+    cmd := exec.CommandContext(streamCtx, "ffmpeg", args...)
+    cmd.Stdout = nil
+    cmd.Stderr = nil
 
-	select {
-	case <-done:
-		logger.Info("rtmp manager shut down gracefully")
-	case <-time.After(timeout):
-		logger.Warn("rtmp manager shutdown timed out, force killing")
-		m.mu.RLock()
-		for _, cmd := range m.streams {
-			_ = cmd.Process.Kill()
-		}
-		m.mu.RUnlock()
-	}
+    if err := cmd.Start(); err != nil {
+        cancel()
+        return fmt.Errorf("执行 ffmpeg 失败: %w", err)
+    }
 
-	return nil
+    task := &streamTask{
+        cmd:    cmd,
+        cancel: cancel,
+    }
+    m.streams[name] = task
+
+    go func() {
+        err := cmd.Wait()
+        if err != nil && err.Error() != "signal: killed" {
+            logger.Error("RTMP 推流 [%s] 异常退出: %v", name, err)
+        }
+        // 清理
+        m.mu.Lock()
+        if t, ok := m.streams[name]; ok && t == task {
+            delete(m.streams, name)
+        }
+        m.mu.Unlock()
+    }()
+
+    logger.Info("已启动 RTMP 推流: %s -> %s/%s", sourceURL, m.cfg.RTMP.ServerURL, name)
+    return nil
+}
+
+// Stop 停止所有推流并释放资源
+func (m *Manager) Stop() {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    m.stopAllLocked()
+    logger.Info("所有 RTMP 推流已停止")
 }
