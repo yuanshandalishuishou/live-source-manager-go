@@ -41,20 +41,20 @@ type Source struct {
 
 // StreamMeta 流元数据（ffprobe 解析结果）
 type StreamMeta struct {
-	CodecType string `json:"codec_type"`
-	CodecName string `json:"codec_name"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	BitRate   int    `json:"bit_rate"`
+	CodecType string  `json:"codec_type"`
+	CodecName string  `json:"codec_name"`
+	Width     int     `json:"width"`
+	Height    int     `json:"height"`
+	BitRate   int     `json:"bit_rate"`
 	Duration  float64 `json:"duration"`
 }
 
 // FilterRule 过滤器规则
 type FilterRule struct {
 	ID          int    `json:"id"`
-	RuleType    string `json:"rule_type"`    // "whitelist" 或 "blacklist"
-	Pattern     string `json:"pattern"`      // 正则表达式
-	TargetType  string `json:"target_type"`  // "url" 或 "name"
+	RuleType    string `json:"rule_type"`   // "whitelist" 或 "blacklist"
+	Pattern     string `json:"pattern"`     // 正则表达式
+	TargetType  string `json:"target_type"` // "url" 或 "name"
 	Enable      bool   `json:"enable"`
 	Priority    int    `json:"priority"`
 	Description string `json:"description"`
