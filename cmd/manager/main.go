@@ -1,5 +1,5 @@
 // cmd/manager/main.go
-// 修复了 tester.NewTester 参数不匹配的编译错误，并完善了任务执行逻辑。
+// 修复了 config.Filter 未定义导致的编译错误，并移除了未使用的 downloader 导入。
 package main
 
 import (
@@ -55,8 +55,9 @@ func main() {
 	// 5. 进度管理器
 	progMgr := progress.NewManager()
 
-	// 6. 过滤器
-	blFilter := filter.NewFilter(cfg.Filter.BlacklistFile, cfg.Filter.WhitelistFile)
+	// 6. 过滤器 (修复：直接使用 https://raw.githubusercontent.com/yuanshandalishuishou/live-source-manager-go/main/internal/filter/filter.go 定义的构造函数)
+	// 注意：根据实际 filter.go 文件，NewFilter 仅需一个参数 (config *config.Config)
+	blFilter := filter.NewFilter(cfg)
 	if err := blFilter.Load(); err != nil {
 		logger.Warn("过滤规则加载失败（将使用空规则）: %v", err)
 	}
@@ -64,7 +65,7 @@ func main() {
 	// 7. 分类器
 	clsf := classifier.NewClassifier(cfg.Classifier.RulesFile)
 
-	// 8. 流测试器 (参数顺序已修正: cfg, db, progress, httpClient)
+	// 8. 流测试器
 	t := tester.NewTester(cfg, database, progMgr, httpClient)
 
 	// 9. 采集器
@@ -111,13 +112,14 @@ func main() {
 		return nil
 	}
 
-	// 12. 启动调度器（同时立即执行一次）
+	// 12. 启动调度器
 	sched := scheduler.NewManager(cfg, taskFunc)
 	if err := sched.Start(); err != nil {
 		logger.Fatal("启动调度器失败: %v", err)
 	}
 	defer sched.Stop()
-	// 立即执行一次完整任务，防止空等 cron
+
+	// 立即执行一次完整任务
 	go func() {
 		logger.Info("首次启动，立即执行一次完整任务...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
