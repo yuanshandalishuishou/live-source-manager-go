@@ -125,6 +125,7 @@ func (t *Tester) TestAll(ctx context.Context) {
 	}
 	logger.Info("源测试完成")
 }
+
 // Run 并发测试一组源，并将结果发送至 resultCh。
 // 注意：resultCh 由调用者创建和关闭，本函数只负责写入，不负责关闭。
 func (t *Tester) Run(ctx context.Context, sources []*models.Source, resultCh chan<- *StreamResult) {
