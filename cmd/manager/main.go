@@ -51,9 +51,9 @@ func main() {
 	sharedHTTPClient := &http.Client{
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
-			MaxIdleConns:        50,
-			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  false,
+			MaxIdleConns:       50,
+			IdleConnTimeout:    90 * time.Second,
+			DisableCompression: false,
 		},
 	}
 
