@@ -12,13 +12,13 @@ import (
 
 // SysConfig 系统配置持久化模型
 type SysConfig struct {
-	ID          int       `json:"id"`
-	GroupName   string    `json:"group_name"`
-	Key         string    `json:"key"`
-	Value       string    `json:"value"`
-	ValueType   string    `json:"value_type"`
-	Description string    `json:"description"`
-	Version     int       `json:"version"`
+	ID          int    `json:"id"`
+	GroupName   string `json:"group_name"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	ValueType   string `json:"value_type"`
+	Description string `json:"description"`
+	Version     int    `json:"version"`
 }
 
 // ---------- 用户与认证 ----------
@@ -27,7 +27,7 @@ type SysConfig struct {
 type User struct {
 	ID           int        `json:"id"`
 	Username     string     `json:"username"`
-	PasswordHash string     `json:"-"`                      // 禁止 JSON 输出密码哈希
+	PasswordHash string     `json:"-"` // 禁止 JSON 输出密码哈希
 	IsAdmin      bool       `json:"is_admin"`
 	IsActive     bool       `json:"is_active"`
 	LastLogin    *time.Time `json:"last_login"`
@@ -40,7 +40,7 @@ type LiveSource struct {
 	ID             int        `json:"id"`
 	Name           string     `json:"name"`
 	Location       string     `json:"location"`
-	LocationType   string     `json:"location_type"`   // url, local_file
+	LocationType   string     `json:"location_type"` // url, local_file
 	Enable         bool       `json:"enable"`
 	LastDownload   *time.Time `json:"last_download"`
 	DownloadStatus string     `json:"download_status"`
@@ -72,20 +72,20 @@ type URLSource struct {
 // PassedSource 通过测试并可用于分发的有效源
 type PassedSource struct {
 	ID             int       `json:"id"`
-	SourceID       int       `json:"source_id"`        // 关联 url_sources 的 id
+	SourceID       int       `json:"source_id"` // 关联 url_sources 的 id
 	URL            string    `json:"url"`
 	Name           string    `json:"name"`
 	TvgID          string    `json:"tvg_id"`
 	TvgLogo        string    `json:"tvg_logo"`
 	GroupTitle     string    `json:"group_title"`
-	Status         string    `json:"status"`           // active, failed, deprecated
+	Status         string    `json:"status"` // active, failed, deprecated
 	ResponseTimeMs int       `json:"response_time_ms"`
-	Resolution     string    `json:"resolution"`       // 如 "1920x1080"
+	Resolution     string    `json:"resolution"` // 如 "1920x1080"
 	Bitrate        int       `json:"bitrate"`
 	LastChecked    time.Time `json:"last_checked"`
 	Location       string    `json:"location"`
 	ISP            string    `json:"isp"`
-	CategoryIDs    []int     `json:"category_ids"`     // 多个分类 ID
+	CategoryIDs    []int     `json:"category_ids"` // 多个分类 ID
 }
 
 // ---------- 展示规则 ----------
@@ -132,7 +132,7 @@ type RTMPStream struct {
 	PushURL  string     `json:"push_url"`
 	HLSURL   string     `json:"hls_url"`
 	LastPush *time.Time `json:"last_push"`
-	IdleSec  int        `json:"idle_sec"`        // 空闲时间（秒）
+	IdleSec  int        `json:"idle_sec"` // 空闲时间（秒）
 }
 
 // ---------- 历史与日志 ----------
