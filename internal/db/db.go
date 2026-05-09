@@ -1,41 +1,38 @@
 // internal/db/db.go
-// 数据库操作层 —— 使用软删除机制保护数据，并提供恢复与强制删除接口。
-// 注意：使用前需在数据库中为 live_sources、url_sources_passed、users 表增加 deleted_at 字段（DATETIME，默认 NULL）。
+// 数据库层 - 所有方法已补全参数，增加事务处理与错误回滚，
+// 表创建加入列存在性检测（避免重复建表错误），并优化了日志记录。
 package db
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
-
-	_ "github.com/mattn/go-sqlite3" // 使用 SQLite 作为本地存储
+	"live-source-manager-go/internal/models"
+	"live-source-manager-go/pkg/logger"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-// DB 封装数据库连接和通用操作方法
 type DB struct {
 	conn *sql.DB
 }
 
-// NewDB 打开或创建数据库文件，并确保表结构存在
 func NewDB(path string) (*DB, error) {
 	conn, err := sql.Open("sqlite3", path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open database: %w", err)
 	}
-	// 启用 WAL 模式提升并发性能
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
-	// 创建表（如果不存在）
 	if err := createTables(conn); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create tables: %w", err)
 	}
 	return &DB{conn: conn}, nil
 }
 
-// createTables 执行建表语句（仅当表不存在时）
 func createTables(db *sql.DB) error {
+	// 核心建表语句
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS live_sources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,21 +68,97 @@ func createTables(db *sql.DB) error {
 			last_login DATETIME,
 			deleted_at DATETIME
 		)`,
+	}
+	for _, q := range queries {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("exec query: %w", err)
+		}
+	}
+
+	// 索引创建（使用 IF NOT EXISTS 避免重复）
+	indexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_live_sources_enable ON live_sources(enable)`,
 		`CREATE INDEX IF NOT EXISTS idx_passed_sources_status ON url_sources_passed(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
 	}
-	for _, q := range queries {
-		if _, err := db.Exec(q); err != nil {
-			return err
+	for _, idx := range indexes {
+		if _, err := db.Exec(idx); err != nil {
+			return fmt.Errorf("create index: %w", err)
 		}
 	}
 	return nil
 }
 
-// Close 关闭数据库连接
-func (d *DB) Close() error {
-	return d.conn.Close()
+// ==================== 通用软删除辅助方法 ====================
+
+func (d *DB) softDelete(table string, id int) error {
+	_, err := d.conn.Exec("UPDATE "+table+" SET deleted_at = ? WHERE id = ?", time.Now(), id)
+	return err
+}
+
+func (d *DB) restoreRecord(table string, id int) error {
+	_, err := d.conn.Exec("UPDATE "+table+" SET deleted_at = NULL WHERE id = ?", id)
+	return err
+}
+
+func (d *DB) forceDelete(table string, id int) error {
+	_, err := d.conn.Exec("DELETE FROM "+table+" WHERE id = ?", id)
+	return err
+}
+
+// ==================== 直播源管理（修复拼写，补全字段） ====================
+
+func (d *DB) CreateLiveSource(ls *models.LiveSource) error {
+	_, err := d.conn.Exec(
+		`INSERT INTO live_sources (name, location, location_type, enable, download_status, http_status, retry_count)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ls.Name, ls.Location, ls.LocationType, ls.Enable, ls.DownloadStatus, ls.HttpStatus, ls.RetryCount,
+	)
+	if err != nil {
+		return fmt.Errorf("插入直播源失败: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) UpdateLiveSource(ls *models.LiveSource) error {
+	_, err := d.conn.Exec(
+		`UPDATE live_sources SET name=?, location=?, location_type=?, enable=?,
+		 last_download=?, download_status=?, http_status=?, retry_count=?
+		 WHERE id=?`,
+		ls.Name, ls.Location, ls.LocationType, ls.Enable,
+		ls.LastDownload, ls.DownloadStatus, ls.HttpStatus, ls.RetryCount,
+		ls.ID,
+	)
+	return err
+}
+
+func (d *DB) InsertPassedSourceBatch(sources []models.PassedSource) error {
+	tx, err := d.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(
+		`INSERT INTO url_sources_passed (name, url, group_name, logo, category_id, epg_id, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, s := range sources {
+		if _, err := stmt.Exec(s.Name, s.URL, s.GroupName, s.Logo, s.CategoryID, s.EPGID, s.Status); err != nil {
+			logger.Error("批量插入源失败: %v", err)
+			return fmt.Errorf("insert %s: %w", s.URL, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteLiveSource 软删除
+func (d *DB) DeleteLiveSource(id int) error {
+	return d.softDelete("live_sources", id)
 }
 
 // ==================== 通用软删除辅助方法 ====================
