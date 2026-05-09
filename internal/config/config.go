@@ -14,25 +14,25 @@ import (
 
 // Config 汇总所有配置节
 type Config struct {
-	Server      ServerConfig
-	Database    DatabaseConfig
-	Collector   CollectorConfig
-	Tester      TesterConfig
-	SubScriber  SubScriberConfig // 注意拼写与项目保持一致，或按需调整
-	Classifier  ClassifierConfig
-	Generator   GeneratorConfig
-	RTMP        RTMPConfig
-	EPG         EPGConfig
-	Output      OutputConfig
-	Scheduler   SchedulerConfig
-	Downloader  DownloaderConfig
+	Server     ServerConfig
+	Database   DatabaseConfig
+	Collector  CollectorConfig
+	Tester     TesterConfig
+	SubScriber SubScriberConfig // 注意拼写与项目保持一致，或按需调整
+	Classifier ClassifierConfig
+	Generator  GeneratorConfig
+	RTMP       RTMPConfig
+	EPG        EPGConfig
+	Output     OutputConfig
+	Scheduler  SchedulerConfig
+	Downloader DownloaderConfig
 }
 
 // ServerConfig Web 服务配置
 type ServerConfig struct {
-	Port     int    `ini:"port"`
+	Port      int    `ini:"port"`
 	JWTSecret string `ini:"jwt_secret"`
-	Debug    bool   `ini:"debug"`
+	Debug     bool   `ini:"debug"`
 }
 
 // DatabaseConfig 数据库连接配置
