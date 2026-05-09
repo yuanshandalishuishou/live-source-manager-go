@@ -81,10 +81,12 @@ type ffprobeFormat struct {
 	BitRate string `json:"bit_rate"`
 }
 
-// TestAll 从数据库读取所有待测源，执行并发测试，并将结果写回数据库。
-// 本方法负责管理 resultCh 的完整生命周期：创建 → 启动生产者 → 消费结果 → 关闭。
+// internal/tester/tester.go
+// 修复：TestAll 中不再调用不存在的 GetAllSources，改为 GetAllLiveSources。
+// 保持其他逻辑不变。
 func (t *Tester) TestAll(ctx context.Context) {
-	sources, err := t.db.GetAllSources()
+	// 获取所有订阅源，而非所有已解析源（GetAllLiveSources 在 db.go 中存在）
+	sources, err := t.db.GetAllLiveSources()
 	if err != nil {
 		logger.Error("获取待测源失败: %v", err)
 		return
@@ -96,34 +98,33 @@ func (t *Tester) TestAll(ctx context.Context) {
 
 	logger.Info("开始测试 %d 个源", len(sources))
 
-	// 创建带缓冲的结果通道，避免消费者慢时阻塞生产者
+	// 创建带缓冲的结果通道
 	resultCh := make(chan *StreamResult, t.concurrency*2)
 
-	// 在单独的 goroutine 中运行所有测试，完成后关闭 resultCh
+	// 启动生产者
 	go func() {
 		t.Run(ctx, sources, resultCh)
-		close(resultCh) // 所有 goroutine 已结束，安全关闭
+		close(resultCh)
 	}()
 
 	// 消费结果并更新数据库
 	for res := range resultCh {
 		if res.Error != nil {
 			logger.Error("源 %s 测试失败: %v", res.Source.URL, res.Error)
-			t.db.UpdateSourceStatus(res.Source.ID, "failed")
+			t.db.UpdateLiveSourceStatus(res.Source.ID, "failed")
 			t.progress.Broadcast("test", fmt.Sprintf("失败: %s", res.Source.URL))
 			continue
 		}
 		if res.Success {
-			t.db.UpdateSourceStatus(res.Source.ID, "active")
+			t.db.UpdateLiveSourceStatus(res.Source.ID, "active")
 			if res.Metadata != nil {
-				t.db.UpdateSourceMeta(res.Source.ID, res.Metadata)
+				t.db.UpdateLiveSourceMeta(res.Source.ID, res.Metadata)
 			}
 			t.progress.Broadcast("test", fmt.Sprintf("成功: %s (%dx%d)", res.Source.URL, res.Metadata.Width, res.Metadata.Height))
 		}
 	}
 	logger.Info("源测试完成")
 }
-
 // Run 并发测试一组源，并将结果发送至 resultCh。
 // 注意：resultCh 由调用者创建和关闭，本函数只负责写入，不负责关闭。
 func (t *Tester) Run(ctx context.Context, sources []*models.Source, resultCh chan<- *StreamResult) {
