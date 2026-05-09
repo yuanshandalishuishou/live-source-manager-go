@@ -1,8 +1,10 @@
 //go:build windows
+
 package scheduler
 
 import (
 	"os"
+
 	"golang.org/x/sys/windows"
 )
 
