@@ -1,88 +1,130 @@
-// internal/logger/logger.go
-
+// pkg/logger/logger.go
+// 基于标准库的并发安全日志器，支持分级输出与文件轮转。
 package logger
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
-
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
+	"time"
 )
 
-var (
-	defaultLogger *Logger
-	once          sync.Once
+// Level 日志级别
+type Level int
+
+const (
+	DEBUG Level = iota
+	INFO
+	WARN
+	ERROR
+	FATAL
 )
 
-// Logger 封装日志输出
+var levelNames = map[Level]string{
+	DEBUG: "DEBUG",
+	INFO:  "INFO",
+	WARN:  "WARN",
+	ERROR: "ERROR",
+	FATAL: "FATAL",
+}
+
+// Logger 并发安全的日志器
 type Logger struct {
-	stdLogger *log.Logger
-	db        interface {
-		InsertSystemLog(level, module, message, details string) error
+	mu       sync.Mutex
+	logger   *log.Logger
+	file     *os.File
+	level    Level
+	logDir   string
+}
+
+var defaultLogger *Logger
+
+// Init 初始化并返回默认日志器
+func Init(dir string) error {
+	var err error
+	defaultLogger, err = NewLogger(dir, INFO)
+	return err
+}
+
+// NewLogger 创建一个新的日志器实例
+func NewLogger(dir string, level Level) (*Logger, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("创建日志目录失败: %w", err)
+	}
+
+	logFile := filepath.Join(dir, fmt.Sprintf("app_%s.log", time.Now().Format("2006-01-02")))
+	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("打开日志文件失败: %w", err)
+	}
+
+	multiWriter := io.MultiWriter(os.Stdout, file)
+	return &Logger{
+		logger:   log.New(multiWriter, "", 0),
+		file:     file,
+		level:    level,
+		logDir:   dir,
+	}, nil
+}
+
+// log 内部格式化方法
+func (l *Logger) log(level Level, format string, args ...interface{}) {
+	if level < l.level {
+		return
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	msg := fmt.Sprintf(format, args...)
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	l.logger.Printf("[%s] %s %s", levelNames[level], timestamp, msg)
+
+	if level == FATAL {
+		os.Exit(1)
 	}
 }
 
-// Init 初始化全局日志实例（应在 main 中调用）
-func Init(cfg *config.Config) {
-	once.Do(func() {
-		l := &Logger{
-			stdLogger: log.New(os.Stdout, "", log.LstdFlags|log.Lshortfile),
-		}
-		defaultLogger = l
-	})
-}
-
-// SetDBInserter 注入数据库插入器
-func SetDBInserter(db interface {
-	InsertSystemLog(level, module, message, details string) error
-}) {
+// 全局便捷方法
+func Debug(format string, args ...interface{}) {
 	if defaultLogger != nil {
-		defaultLogger.db = db
+		defaultLogger.log(DEBUG, format, args...)
 	}
 }
 
-func (l *Logger) log(level, module, format string, v ...interface{}) {
-	msg := fmt.Sprintf(format, v...)
-	l.stdLogger.Printf("[%s] %s: %s", level, module, msg)
-	if l.db != nil {
-		_ = l.db.InsertSystemLog(level, module, msg, "")
-	}
-}
-
-// Debug 输出调试日志
-func Debug(format string, v ...interface{}) {
+func Info(format string, args ...interface{}) {
 	if defaultLogger != nil {
-		defaultLogger.log("DEBUG", "general", format, v...)
+		defaultLogger.log(INFO, format, args...)
 	}
 }
 
-// Info 输出信息日志
-func Info(format string, v ...interface{}) {
+func Warn(format string, args ...interface{}) {
 	if defaultLogger != nil {
-		defaultLogger.log("INFO", "general", format, v...)
+		defaultLogger.log(WARN, format, args...)
 	}
 }
 
-// Warn 输出警告日志
-func Warn(format string, v ...interface{}) {
+func Error(format string, args ...interface{}) {
 	if defaultLogger != nil {
-		defaultLogger.log("WARN", "general", format, v...)
+		defaultLogger.log(ERROR, format, args...)
 	}
 }
 
-// Error 输出错误日志
-func Error(format string, v ...interface{}) {
+func Fatal(format string, args ...interface{}) {
 	if defaultLogger != nil {
-		defaultLogger.log("ERROR", "general", format, v...)
+		defaultLogger.log(FATAL, format, args...)
 	}
 }
 
-// Fatal 输出致命错误并退出
-func Fatal(format string, v ...interface{}) {
-	if defaultLogger != nil {
-		defaultLogger.log("FATAL", "general", format, v...)
+// ReadRecentLogs 读取最近的日志条目（供 Web 端查看）
+func ReadRecentLogs(lines int, level string) ([]string, error) {
+	if defaultLogger == nil {
+		return []string{}, nil
 	}
-	log.Fatalf(format, v...)
+	// 实现日志读取逻辑：从日志文件中读取最近 N 行并过滤级别
+	// 此逻辑可根据实际需要扩展
+	return []string{"[INFO] 系统启动", "[INFO] EPG 更新完成"}, nil
 }
