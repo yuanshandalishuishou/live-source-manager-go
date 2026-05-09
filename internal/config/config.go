@@ -178,7 +178,7 @@ func Save(path string, cfg *Config) error {
 
 // setDefaults 设置所有配置项的默认值
 func setDefaults(cfg *Config) {
-	cfg.Server.Port = 23456      // 修复：默认 Web 端口为 23456，与 README 一致
+	cfg.Server.Port = 23456 // 修复：默认 Web 端口为 23456，与 README 一致
 	cfg.Server.Debug = false
 	cfg.Database.Path = "data.db" // 修复：默认使用 data.db，确保与 db.go 中的处理一致
 	cfg.Collector.IntervalMinutes = 240
