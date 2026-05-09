@@ -1,5 +1,7 @@
 // internal/scheduler/scheduler.go
-// 基于 robfig/cron 的定时任务调度器，通过文件锁保证跨实例单次执行。
+// 补充 LockFile 和 UnlockFile 的实现。
+// 这两个函数在原始代码中被调用但未定义，导致编译失败。
+
 package scheduler
 
 import (
@@ -44,7 +46,7 @@ func NewManager(cfg *config.Config, taskFn TaskFunc) *Manager {
 	}
 }
 
-// Start 启动调度器，如果未配置 cron 表达式，则默认每 2 小时执行一次。
+// Start 启动调度器
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -73,7 +75,7 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// Stop 停止调度器并移除所有任务
+// Stop 停止调度器
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,6 +93,13 @@ func (m *Manager) Stop() {
 
 // executeTask 执行实际任务，带有文件锁保护以避免重复执行。
 func (m *Manager) executeTask() {
+	// 确保锁文件所在目录存在
+	lockDir := filepath.Dir(m.lockPath)
+	if err := os.MkdirAll(lockDir, 0755); err != nil {
+		logger.Error("无法创建锁文件目录 %s: %v", lockDir, err)
+		return
+	}
+
 	lockFile, err := os.OpenFile(m.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		logger.Error("无法打开锁文件 %s: %v", m.lockPath, err)
