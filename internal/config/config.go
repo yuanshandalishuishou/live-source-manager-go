@@ -294,19 +294,19 @@ func (cfg *Config) Validate() error {
 // ToEnvMap 将部分关键配置转换为 map，供 Web 界面读取。
 func (cfg *Config) ToEnvMap() map[string]interface{} {
 	return map[string]interface{}{
-		"server_port":           cfg.Server.Port,
-		"server_debug":          cfg.Server.Debug,
-		"db_path":               cfg.Database.Path,
-		"collector_interval":    cfg.Collector.IntervalMinutes,
-		"tester_timeout":        cfg.Tester.Timeout,
-		"tester_concurrency":    cfg.Tester.Concurrency,
-		"tester_ffprobe_path":   cfg.Tester.FfprobePath,
-		"output_directory":      cfg.Output.Directory,
-		"output_filename":       cfg.Output.Filename,
-		"scheduler_enabled":     cfg.Scheduler.Enabled,
-		"scheduler_cron":        cfg.Scheduler.Cron,
-		"rtmp_enable":           cfg.RTMP.Enable,
-		"epg_enable":            cfg.EPG.Enable,
-		"subscriber_enable":     cfg.SubScriber.Enable,
+		"server_port":         cfg.Server.Port,
+		"server_debug":        cfg.Server.Debug,
+		"db_path":             cfg.Database.Path,
+		"collector_interval":  cfg.Collector.IntervalMinutes,
+		"tester_timeout":      cfg.Tester.Timeout,
+		"tester_concurrency":  cfg.Tester.Concurrency,
+		"tester_ffprobe_path": cfg.Tester.FfprobePath,
+		"output_directory":    cfg.Output.Directory,
+		"output_filename":     cfg.Output.Filename,
+		"scheduler_enabled":   cfg.Scheduler.Enabled,
+		"scheduler_cron":      cfg.Scheduler.Cron,
+		"rtmp_enable":         cfg.RTMP.Enable,
+		"epg_enable":          cfg.EPG.Enable,
+		"subscriber_enable":   cfg.SubScriber.Enable,
 	}
 }
