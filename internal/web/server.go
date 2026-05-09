@@ -1,110 +1,107 @@
 // internal/web/server.go
-// 完全基于 gorilla/mux 的 HTTP 服务器，负责启动服务、注册路由和优雅关闭。
-// 修正了构造函数命名，与 main.go 保持协调一致。
 package web
 
 import (
-	"context"
-	"database/sql"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
+    "context"
+    "net/http"
+    "time"
 
-	"live-source-manager-go/internal/config"
-	"live-source-manager-go/pkg/logger"
-
-	"github.com/gorilla/mux"
+    "github.com/gorilla/mux"
+    "live-source-manager-go/internal/config"
+    "live-source-manager-go/internal/db"
+    "live-source-manager-go/pkg/logger"
 )
 
-// Server 封装 HTTP 服务器及其所有依赖。
-type Server struct {
-	cfg     *config.Config
-	db      *sql.DB
-	httpSrv *http.Server
-	router  *mux.Router
-	handler *Handler // 内部管理的业务处理器
+// App 封装 Web 应用
+type App struct {
+    cfg   *config.Config
+    db    *db.DB
+    srv   *http.Server
+    mux   *mux.Router
 }
 
-// NewServer 创建一个新的 Web 服务器实例并注册所有路由。
-// 注意：main.go 中调用此函数前，需先创建 JWTManager 和 Handler 实例。
-func NewServer(cfg *config.Config, db *sql.DB, handler *Handler) *Server {
-	router := mux.NewRouter()
-	srv := &Server{
-		cfg:     cfg,
-		db:      db,
-		router:  router,
-		handler: handler,
-	}
-
-	// 路由注册
-	srv.registerRoutes()
-
-	return srv
+// NewApp 创建一个新的 Web 应用实例
+func NewApp(cfg *config.Config, database *db.DB) *App {
+    app := &App{
+        cfg: cfg,
+        db:  database,
+    }
+    app.initRoutes()
+    return app
 }
 
-// registerRoutes 配置公开及受保护的全部 API 路由
-func (s *Server) registerRoutes() {
-	// 公开接口
-	s.router.HandleFunc("/api/v1/playlist", s.handlePlaylist).Methods("GET")
-	s.router.HandleFunc("/api/v1/epg.xml", s.handleEPG).Methods("GET")
-	s.router.HandleFunc("/api/v1/health", s.handleHealth).Methods("GET")
-	s.router.HandleFunc("/api/login", s.handler.handleLogin).Methods("POST")
+func (a *App) initRoutes() {
+    r := mux.NewRouter()
 
-	// JWT 保护的管理接口
-	protected := s.router.PathPrefix("/api/v1/admin").Subrouter()
-	protected.Use(s.handler.authMiddleware)
+    // 全局中间件
+    r.Use(corsMiddleware)
+    r.Use(requestLoggerMiddleware)
+    r.Use(recoveryMiddleware)
+    r.Use(noCacheMiddleware)
 
-	// 注册所有管理路由（含仪表盘、分类、配置、日志等）
-	s.handler.RegisterRoutes(s.router)
+    // 静态资源（前端页面）
+    r.PathPrefix("/static/").Handler(http.StripPrefix("/static/",
+        http.FileServer(http.Dir("web/static"))))
+
+    // 认证相关
+    r.HandleFunc("/api/auth/login", a.handleLogin).Methods("POST")
+    r.HandleFunc("/api/auth/logout", a.handleLogout).Methods("POST")
+    r.HandleFunc("/api/auth/status", a.handleAuthStatus).Methods("GET")
+
+    // 仪表盘统计
+    r.HandleFunc("/api/dashboard/stats", a.authMiddleware(a.handleDashboardStats)).Methods("GET")
+
+    // 源管理
+    r.HandleFunc("/api/sources", a.authMiddleware(a.handleGetSources)).Methods("GET")
+    r.HandleFunc("/api/sources", a.authMiddleware(a.handleAddSource)).Methods("POST")
+    r.HandleFunc("/api/sources/{id}", a.authMiddleware(a.handleDeleteSource)).Methods("DELETE")
+    r.HandleFunc("/api/sources/{id}/test", a.authMiddleware(a.handleTestSource)).Methods("POST")
+
+    // 有效源（通过测试的源）
+    r.HandleFunc("/api/passed", a.authMiddleware(a.handleGetPassedSources)).Methods("GET")
+    r.HandleFunc("/api/passed/export", a.authMiddleware(a.handleExportM3U)).Methods("GET")
+
+    // 过滤规则
+    r.HandleFunc("/api/filter/rules", a.authMiddleware(a.handleGetFilterRules)).Methods("GET")
+    r.HandleFunc("/api/filter/rules", a.authMiddleware(a.handleAddFilterRule)).Methods("POST")
+    r.HandleFunc("/api/filter/rules/{id}", a.authMiddleware(a.handleUpdateFilterRule)).Methods("PUT")
+    r.HandleFunc("/api/filter/rules/{id}", a.authMiddleware(a.handleDeleteFilterRule)).Methods("DELETE")
+
+    // 分类管理
+    r.HandleFunc("/api/categories", a.authMiddleware(a.handleGetCategories)).Methods("GET")
+    r.HandleFunc("/api/categories", a.authMiddleware(a.handleAddCategory)).Methods("POST")
+    r.HandleFunc("/api/categories/{id}", a.authMiddleware(a.handleUpdateCategory)).Methods("PUT")
+    r.HandleFunc("/api/categories/{id}", a.authMiddleware(a.handleDeleteCategory)).Methods("DELETE")
+
+    // 配置管理
+    r.HandleFunc("/api/config", a.authMiddleware(a.handleGetConfig)).Methods("GET")
+    r.HandleFunc("/api/config", a.authMiddleware(a.handleUpdateConfig)).Methods("PUT")
+
+    // 前端页面回退（SPA支持）
+    r.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        http.ServeFile(w, r, "web/static/index.html")
+    })
+
+    a.mux = r
 }
 
-// Start 启动 HTTP 服务器并支持优雅关闭
-func (s *Server) Start(addr string) error {
-	s.httpSrv = &http.Server{
-		Addr:         addr,
-		Handler:      s.router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	// 监听系统信号以触发优雅关闭
-	go func() {
-		quit := make(chan os.Signal, 1)
-		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-		<-quit
-		logger.Info("Web 服务器正在优雅关闭...")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := s.httpSrv.Shutdown(ctx); err != nil {
-			logger.Error("Web 服务器关闭异常: %v", err)
-		}
-	}()
-
-	logger.Info("Web 服务器启动，监听地址: %s", addr)
-	if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	return nil
+// Start 启动 HTTP 服务
+func (a *App) Start(addr string) error {
+    a.srv = &http.Server{
+        Handler:      a.mux,
+        Addr:         addr,
+        WriteTimeout: 15 * time.Second,
+        ReadTimeout:  15 * time.Second,
+        IdleTimeout:  60 * time.Second,
+    }
+    logger.Info("Web 服务正在监听 %s", addr)
+    return a.srv.ListenAndServe()
 }
 
-// 公开接口的简单处理函数（后续可集成 generator 等模块以实现动态数据）
-func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "audio/mpegurl")
-	w.Write([]byte("#EXTM3U\n"))
-}
-
-func (s *Server) handleEPG(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/xml")
-	w.Write([]byte("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<tv/>"))
-}
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
-	})
+// Shutdown 优雅关闭
+func (a *App) Shutdown(ctx context.Context) error {
+    if a.srv != nil {
+        return a.srv.Shutdown(ctx)
+    }
+    return nil
 }
