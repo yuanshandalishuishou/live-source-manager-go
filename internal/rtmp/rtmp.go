@@ -5,6 +5,7 @@ package rtmp
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -21,19 +22,19 @@ type Stream struct {
 
 // Manager 管理所有推流进程
 type Manager struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 	streams map[string]*exec.Cmd
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 }
 
 // NewManager 创建 RTMP 管理器
 func NewManager(parent context.Context) *Manager {
 	ctx, cancel := context.WithCancel(parent)
 	return &Manager{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:     ctx,
+		cancel:  cancel,
 		streams: make(map[string]*exec.Cmd),
 	}
 }
