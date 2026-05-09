@@ -1,5 +1,7 @@
 // cmd/manager/main.go
-
+//
+// 系统主入口：负责加载配置、初始化各核心模块（数据库、采集器、测试器、调度器等），
+// 最后启动 Web 管理服务并等待退出信号。
 package main
 
 import (
@@ -11,161 +13,144 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gorilla/mux"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/epg"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/filter"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/generator"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/geo"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/progress"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/rtmp"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/rules"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/scheduler"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/source"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/tester"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/web"
+	"live-source-manager-go/internal/classifier"
+	"live-source-manager-go/internal/collector"
+	"live-source-manager-go/internal/config"
+	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/downloader"
+	"live-source-manager-go/internal/epg"
+	"live-source-manager-go/internal/filter"
+	"live-source-manager-go/internal/generator"
+	"live-source-manager-go/internal/progress"
+	"live-source-manager-go/internal/rtmp"
+	"live-source-manager-go/internal/scheduler"
+	"live-source-manager-go/internal/tester"
+	"live-source-manager-go/internal/web"
+	"live-source-manager-go/pkg/logger"
 )
 
 func main() {
-	// 1. 加载配置
-	configPath := "/config/config.ini"
-	if len(os.Args) > 1 {
-		configPath = os.Args[1]
-	}
-	cfg, err := config.LoadConfig(configPath)
+	// 1. 加载配置文件
+	cfg, err := config.Load("config.ini")
 	if err != nil {
-		log.Fatalf("配置加载失败: %v", err)
+		log.Fatalf("加载配置失败: %v", err)
 	}
-	logger.Init(cfg)
 
-	// 2. 初始化数据库
-	database, err := db.Init()
+	// 2. 初始化日志系统
+	if err := logger.Init(cfg.Output.Directory); err != nil {
+		log.Fatalf("初始化日志失败: %v", err)
+	}
+	logger.Info("live-source-manager-go 启动中...")
+
+	// 3. 初始化数据库
+	database, err := db.NewDB(cfg.Database.Path)
 	if err != nil {
-		log.Fatalf("数据库初始化失败: %v", err)
+		logger.Fatal("初始化数据库失败: %v", err)
 	}
 	defer database.Close()
+	logger.Info("数据库连接成功: %s", cfg.Database.Path)
 
-	// 3. 创建公共 HTTP 客户端池（统一配置，长期复用）
-	sharedHTTPClient := &http.Client{
+	// 4. 共享 HTTP 客户端（用于下载器、采集器等）
+	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:       50,
-			IdleConnTimeout:    90 * time.Second,
-			DisableCompression: false,
-		},
 	}
 
-	// 4. 初始化核心组件
-	geoResolver, err := geo.NewResolver()
-	if err != nil {
-		logger.Warn("归属地解析器初始化失败，将跳过归属地识别", "error", err)
-	}
-
+	// 5. 进度管理器（WebSocket 广播）
 	progMgr := progress.NewManager()
-	t := tester.NewTester(cfg, database, geoResolver, progMgr, sharedHTTPClient)
 
-	filterInstance, err := filter.NewFilter(database)
-	if err != nil {
-		logger.Fatal("过滤器初始化失败", err)
+	// 6. 黑白名单过滤器
+	blFilter := filter.NewFilter(cfg.Filter.BlacklistFile, cfg.Filter.WhitelistFile)
+	if err := blFilter.Load(); err != nil {
+		logger.Warn("过滤规则加载失败（将使用空规则）: %v", err)
 	}
 
-	gen := generator.NewGenerator(cfg, database, filterInstance)
-	parser := source.NewParser()
-	sourceMgr := source.NewManager(cfg, database, parser, sharedHTTPClient)
+	// 7. 分类器（基于名称规则匹配）
+	clsf := classifier.NewClassifier(cfg.Classifier.RulesFile)
 
-	aliasMatcher, err := rules.NewAliasMatcher(database)
-	if err != nil {
-		logger.Fatal("别名匹配器初始化失败", err)
-	}
+	// 8. 流测试器（ffprobe 探针）
+	t := tester.NewTester(cfg, database, progMgr, httpClient)
 
-	epgMgr := epg.NewManager(cfg, database, sharedHTTPClient)
+	// 9. 采集器（下载订阅源）
+	collect := collector.NewCollector(cfg, database, httpClient, progMgr)
 
-	// 5. 启动初始测试任务
-	// 定时调度器虽已注册，但程序首次启动时应立即运行一次测试
-	ctx := context.Background()
-	logger.Info("程序启动，开始执行初始测试任务")
-	_, err = sourceMgr.DownloadAll(ctx)
-	if err != nil {
-		logger.Error("初始下载失败", "error", err)
-	}
-	// 应用别名替换
-	unprocessed, _ := database.GetUnprocessedSources()
-	for i, src := range unprocessed {
-		unprocessed[i].Name = aliasMatcher.Apply(src.Name)
-	}
-	database.BatchUpdateNames(unprocessed)
-	// 执行测试
-	err = t.Start(ctx)
-	if err != nil {
-		logger.Error("初始测试任务失败", "error", err)
-	}
-	// 生成播放列表
-	err = gen.Generate()
-	if err != nil {
-		logger.Error("初始生成播放列表失败", "error", err)
-	}
+	// 10. M3U 生成器、EPG、RTMP 管理器
+	gen := generator.NewGenerator(cfg, database)
+	epgMgr := epg.NewManager(cfg, database)
+	rtmpMgr := rtmp.NewManager(context.Background())
 
-	// 6. 启动后台服务
-	sched := scheduler.NewScheduler(cfg, database)
-	sched.AddTask("0 2 * * *", func(ctx context.Context) error {
-		// 定时更新逻辑
-		_, err := sourceMgr.DownloadAll(ctx)
-		if err != nil {
+	// 11. 数据库下载器（Web 端一键分发）
+	dl := downloader.NewDownloader(cfg, database)
+
+	// 12. 完整的一次性同步任务（采集 -> 测试 -> 分类 -> 生成 -> EPG）
+	taskFunc := func(ctx context.Context) error {
+		logger.Info("开始执行计划任务...")
+
+		// 12.1 下载订阅源
+		if err := collect.Collect(ctx); err != nil {
+			logger.Error("采集失败: %v", err)
 			return err
 		}
-		unprocessed, _ := database.GetUnprocessedSources()
-		for i, src := range unprocessed {
-			unprocessed[i].Name = aliasMatcher.Apply(src.Name)
+
+		// 12.2 测试所有源
+		t.TestAll(ctx)
+
+		// 12.3 应用过滤器与分类
+		sources, err := database.GetActivePassedSources()
+		if err != nil {
+			logger.Error("获取有效源失败: %v", err)
+			return err
 		}
-		database.BatchUpdateNames(unprocessed)
-		if err := t.Start(ctx); err != nil {
-			logger.Error("定时测试任务失败", "error", err)
+		filtered := blFilter.Apply(sources)
+		classified := clsf.Apply(filtered)
+
+		// 12.4 生成 M3U 播放列表
+		if err := gen.Generate(classified); err != nil {
+			logger.Error("生成 M3U 失败: %v", err)
 		}
-		return gen.Generate()
-	})
-	sched.Start()
-	epgMgr.Start()
 
-	rtmpCfg := rtmp.RTMPConfig{
-		MaxStreams:     cfg.RTMP.MaxStreams,
-		IdleTimeout:    time.Duration(cfg.RTMP.IdleTimeout) * time.Second,
-		RetryMax:       cfg.RTMP.RetryMax,
-		RetryBaseDelay: time.Duration(cfg.RTMP.RetryBaseDelay) * time.Second,
-		FfmpegPath:     cfg.RTMP.FfmpegPath,
-		TranscodeMode:  cfg.RTMP.TranscodeMode,
-	}
-	if cfg.RTMP.OpenRTMP {
-		rtmpMgr := rtmp.NewManager(database, rtmpCfg)
-		rtmpMgr.Start()
+		// 12.5 更新 EPG 数据
+		if err := epgMgr.Update(); err != nil {
+			logger.Error("EPG 更新失败: %v", err)
+		}
+
+		// 12.6 RTMP 推流（根据需要）
+		if cfg.RTMP.Enable {
+			rtmpMgr.PushStreams(classified)
+		}
+
+		logger.Info("计划任务执行完毕")
+		return nil
 	}
 
-	// 7. 启动 Web 服务
-	jwtMgr := web.NewJWTManager(cfg)
-	handler := web.NewHandler(cfg, database, t, filterInstance, gen, sourceMgr, epgMgr, nil)
-	wsHandler := web.NewWSHandler(progMgr)
+	// 13. 调度器
+	sched := scheduler.NewManager(cfg, taskFunc)
+	if err := sched.Start(); err != nil {
+		logger.Fatal("启动调度器失败: %v", err)
+	}
+	defer sched.Stop()
 
-	router := mux.NewRouter()
-	router.HandleFunc("/ws/progress", wsHandler.ServeWS)
-	handler.RegisterRoutes(router)
-
-	server := web.NewServer(cfg, router)
-
-	// 8. 优雅退出
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
+	// 14. 启动 Web 管理服务
+	webApp := web.NewApp(cfg, database)
 	go func() {
-		logger.Info("Web 服务已启动")
-		if err := server.Serve(); err != nil {
-			logger.Fatal("Web 服务异常退出", "error", err)
+		addr := ":" + cfg.Server.Port
+		logger.Info("Web 管理后台启动于 %s", addr)
+		if err := webApp.Start(addr); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("Web 服务启动失败: %v", err)
 		}
 	}()
 
-	<-quit
-	logger.Info("收到退出信号，开始关闭服务...")
-	sched.Stop()
-	epgMgr.Stop()
-	logger.Info("服务已安全退出")
+	// 15. 监听系统信号，优雅退出
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	logger.Info("收到退出信号 %v，开始优雅关闭...", sig)
+
+	// 给 Web 服务一定时间完成现有请求
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := webApp.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Web 服务关闭出错: %v", err)
+	}
+	rtmpMgr.Shutdown(5 * time.Second)
+	logger.Info("系统已安全退出")
 }
