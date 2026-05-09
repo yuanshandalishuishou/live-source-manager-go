@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
-	"github.com/yuanshandalishuishou/live-source-manager-go/pkg/logger"
 
 	_ "github.com/mattn/go-sqlite3" // 使用 SQLite 作为本地存储
 )
