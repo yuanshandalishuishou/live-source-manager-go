@@ -19,16 +19,16 @@ import (
 
 // StreamResult 表示单个流的测试结果
 type StreamResult struct {
-	Source   *models.Source        // 被测试的源对象
-	Success  bool                  // 测试是否通过
-	Metadata *models.StreamMeta    // ffprobe 提取的元数据
-	Error    error                 // 出现的错误（如果有）
+	Source   *models.Source     // 被测试的源对象
+	Success  bool               // 测试是否通过
+	Metadata *models.StreamMeta // ffprobe 提取的元数据
+	Error    error              // 出现的错误（如果有）
 }
 
 // Tester 流测试器结构体
 type Tester struct {
 	concurrency int           // 最大并发测试数
-	timeout     time.Duration  // 单个测试超时时间
+	timeout     time.Duration // 单个测试超时时间
 	ffprobePath string        // ffprobe 可执行文件路径
 }
 
