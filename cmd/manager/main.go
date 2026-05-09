@@ -1,5 +1,5 @@
 // cmd/manager/main.go
-// 修复了 config.Filter 未定义导致的编译错误，并移除了未使用的 downloader 导入。
+
 package main
 
 import (
@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -55,8 +56,7 @@ func main() {
 	// 5. 进度管理器
 	progMgr := progress.NewManager()
 
-	// 6. 过滤器 (修复：直接使用 https://raw.githubusercontent.com/yuanshandalishuishou/live-source-manager-go/main/internal/filter/filter.go 定义的构造函数)
-	// 注意：根据实际 filter.go 文件，NewFilter 仅需一个参数 (config *config.Config)
+	// 6. 过滤器
 	blFilter := filter.NewFilter(cfg)
 	if err := blFilter.Load(); err != nil {
 		logger.Warn("过滤规则加载失败（将使用空规则）: %v", err)
@@ -71,7 +71,7 @@ func main() {
 	// 9. 采集器
 	collect := collector.NewCollector(cfg, database, httpClient, progMgr)
 
-	// 10. M3U 生成器、EPG、RTMP 管理器
+	// 10. 生成器、EPG管理器、RTMP管理器
 	gen := generator.NewGenerator(cfg, database)
 	epgMgr := epg.NewManager(cfg, database)
 	rtmpMgr := rtmp.NewManager(context.Background())
@@ -83,7 +83,6 @@ func main() {
 		// 采集订阅源
 		if err := collect.Collect(ctx); err != nil {
 			logger.Error("采集失败: %v", err)
-			return err
 		}
 
 		// 测试所有源
@@ -95,6 +94,7 @@ func main() {
 			logger.Error("获取有效源失败: %v", err)
 			return err
 		}
+
 		filtered := blFilter.Apply(sources)
 		classified := clsf.Apply(filtered)
 
@@ -106,6 +106,15 @@ func main() {
 		// 更新 EPG 数据
 		if err := epgMgr.Update(); err != nil {
 			logger.Error("EPG 更新失败: %v", err)
+		}
+
+		// 启动 RTMP 推流（根据配置开关）
+		if cfg.RTMP.Enable {
+			if err := rtmpMgr.Start(ctx); err != nil {
+				logger.Error("RTMP 推流启动失败: %v", err)
+			} else {
+				logger.Info("RTMP 推流已启动")
+			}
 		}
 
 		logger.Info("计划任务执行完毕")
@@ -121,9 +130,16 @@ func main() {
 
 	// 立即执行一次完整任务
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("首次任务发生 panic 并已恢复: %v\n堆栈信息: %s", r, string(debug.Stack()))
+			}
+		}()
+
 		logger.Info("首次启动，立即执行一次完整任务...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
+
 		if err := taskFunc(ctx); err != nil {
 			logger.Error("首次任务执行失败: %v", err)
 		}
@@ -132,7 +148,7 @@ func main() {
 	// 13. 启动 Web 管理服务
 	webApp := web.NewApp(cfg, database)
 	go func() {
-		addr := ":" + cfg.Server.Port
+		addr := fmt.Sprintf(":%d", cfg.Server.Port) // 修复：使用配置的端口
 		logger.Info("Web 管理后台启动于 %s", addr)
 		if err := webApp.Start(addr); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("Web 服务启动失败: %v", err)
@@ -147,9 +163,10 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	if err := webApp.Shutdown(shutdownCtx); err != nil {
 		logger.Error("Web 服务关闭出错: %v", err)
 	}
-	rtmpMgr.Shutdown(5 * time.Second)
+	rtmpMgr.Shutdown(5 * time.Second) // 修复：确保 RTMP 管理器正常关闭
 	logger.Info("系统已安全退出")
 }
