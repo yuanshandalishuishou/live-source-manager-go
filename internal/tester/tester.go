@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
-	"github.com/yuanshandalishuishou/live-source-manager-go/pkg/logger"
 )
 
 // Tester 负责对流进行 ffprobe 探测

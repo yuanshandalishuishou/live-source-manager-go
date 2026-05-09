@@ -3,18 +3,12 @@
 package epg
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/config"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
 	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
 )
 
@@ -22,13 +16,13 @@ import (
 
 // Program EPG 节目结构体
 type Program struct {
-	XMLName     xml.Name   `xml:"programme"`
-	Channel     string     `xml:"channel,attr"`
-	StartTime   XmlTime    `xml:"start,attr"`
-	StopTime    XmlTime    `xml:"stop,attr"`
-	Title       string     `xml:"title"`
-	Description string     `xml:"desc,omitempty"`
-	Category    string     `xml:"category,omitempty"`
+	XMLName     xml.Name `xml:"programme"`
+	Channel     string   `xml:"channel,attr"`
+	StartTime   XmlTime  `xml:"start,attr"`
+	StopTime    XmlTime  `xml:"stop,attr"`
+	Title       string   `xml:"title"`
+	Description string   `xml:"desc,omitempty"`
+	Category    string   `xml:"category,omitempty"`
 }
 
 // XmlTime 自定义时间类型，用于 XML 序列化
