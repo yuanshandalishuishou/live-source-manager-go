@@ -11,7 +11,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/zu1k/nali v0.7.0
 	golang.org/x/crypto v0.14.0
-	golang.org/x/time v0.15.0
 	gopkg.in/ini.v1 v1.67.0
 )
 
