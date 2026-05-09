@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Source Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body { padding-top: 70px; }
+        .sidebar { position: fixed; top: 56px; bottom: 0; left: 0; z-index: 100; padding: 20px 0; background-color: #f8f9fa; border-right: 1px solid #dee2e6; width: 220px; }
+        main { margin-left: 220px; padding: 20px; }
+        .nav-link { color: #333; }
+        .nav-link.active { font-weight: bold; color: #0d6efd; }
+        .table-responsive { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">LSM 管理后台</a>
+            <div class="d-flex">
+                <span id="loginUser" class="navbar-text me-3 text-light"></span>
+                <button id="logoutBtn" class="btn btn-outline-light btn-sm" style="display:none;">退出</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 侧边栏 -->
+    <div id="sidebar" class="sidebar" style="display:none;">
+        <ul class="nav flex-column">
+            <li class="nav-item"><a class="nav-link active" href="#" data-page="dashboard">仪表盘</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-page="sources">直播源管理</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-page="passed">有效源列表</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-page="filter">过滤规则</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-page="categories">分类管理</a></li>
+            <li class="nav-item"><a class="nav-link" href="#" data-page="config">系统配置</a></li>
+        </ul>
+    </div>
+
+    <!-- 主内容区 -->
+    <main id="mainContent">
+        <!-- 登录页面 -->
+        <div id="page-login" class="row justify-content-center mt-5">
+            <div class="col-md-4">
+                <h3 class="mb-4">用户登录</h3>
+                <div class="mb-3">
+                    <input type="text" id="username" class="form-control" placeholder="用户名">
+                </div>
+                <div class="mb-3">
+                    <input type="password" id="password" class="form-control" placeholder="密码">
+                </div>
+                <button id="loginBtn" class="btn btn-primary w-100">登 录</button>
+                <div id="loginError" class="text-danger mt-2"></div>
+            </div>
+        </div>
+
+        <!-- 其他页面将通过 JS 动态加载 -->
+        <div id="page-dashboard" style="display:none;"></div>
+        <div id="page-sources" style="display:none;"></div>
+        <div id="page-passed" style="display:none;"></div>
+        <div id="page-filter" style="display:none;"></div>
+        <div id="page-categories" style="display:none;"></div>
+        <div id="page-config" style="display:none;"></div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 全局状态
+        let currentUser = null;
+        let token = localStorage.getItem('token') || '';
+
+        // API 基础路径
+        const API_BASE = '/api';
+
+        // 页面路由
+        function showPage(page) {
+            // 隐藏所有页面
+            document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
+            // 显示选中页面
+            const target = document.getElementById('page-' + page);
+            if (target) target.style.display = 'block';
+            // 更新侧边栏激活状态
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.toggle('active', link.dataset.page === page);
+            });
+            // 加载页面数据
+            if (page === 'dashboard') loadDashboard();
+            else if (page === 'sources') loadSources();
+            else if (page === 'passed') loadPassed();
+            else if (page === 'filter') loadFilterRules();
+            else if (page === 'categories') loadCategories();
+            else if (page === 'config') loadConfig();
+        }
+
+        // 认证相关
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const resp = await fetch(API_BASE + '/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username, password})
+            });
+            const data = await resp.json();
+            if (resp.ok && data.token) {
+                token = data.token;
+                localStorage.setItem('token', token);
+                currentUser = data.user;
+                onAuthSuccess();
+            } else {
+                document.getElementById('loginError').textContent = data.message || '登录失败';
+            }
+        }
+
+        function logout() {
+            token = '';
+            localStorage.removeItem('token');
+            currentUser = null;
+            document.getElementById('sidebar').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'none';
+            document.getElementById('loginUser').textContent = '';
+            showPage('login');
+        }
+
+        function checkAuth() {
+            if (!token) {
+                showPage('login');
+                return false;
+            }
+            return true;
+        }
+
+        async function fetchAuthStatus() {
+            try {
+                const resp = await fetch(API_BASE + '/auth/status', {
+                    headers: {'Authorization': 'Bearer ' + token}
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    currentUser = data.user;
+                    onAuthSuccess();
+                } else {
+                    logout();
+                }
+            } catch { logout(); }
+        }
+
+        function onAuthSuccess() {
+            document.getElementById('sidebar').style.display = 'block';
+            document.getElementById('logoutBtn').style.display = 'inline-block';
+            document.getElementById('loginUser').textContent = currentUser ? currentUser.username : '';
+            showPage('dashboard');
+        }
+
+        // API 请求封装
+        async function apiGet(url) {
+            const resp = await fetch(url, {
+                headers: {'Authorization': 'Bearer ' + token}
+            });
+            if (resp.status === 401) { logout(); return null; }
+            return resp.json();
+        }
+        async function apiPost(url, body) {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token
+                },
+                body: JSON.stringify(body)
+            });
+            if (resp.status === 401) { logout(); return null; }
+            return resp.json();
+        }
+        async function apiPut(url, body) {
+            const resp = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + token
+                },
+                body: JSON.stringify(body)
+            });
+            if (resp.status === 401) { logout(); return null; }
+            return resp.json();
+        }
+        async function apiDelete(url) {
+            const resp = await fetch(url, {
+                method: 'DELETE',
+                headers: {'Authorization': 'Bearer ' + token}
+            });
+            if (resp.status === 401) { logout(); return null; }
+            return resp.ok;
+        }
+
+        // 仪表盘
+        async function loadDashboard() {
+            const data = await apiGet(API_BASE + '/dashboard/stats');
+            if (!data) return;
+            document.getElementById('page-dashboard').innerHTML = `
+                <h4>系统概览</h4>
+                <div class="row mt-4">
+                    <div class="col-md-3"><div class="card text-white bg-primary"><div class="card-body"><h5 class="card-title">总源数</h5><p class="card-text display-6">${data.total_sources || 0}</p></div></div></div>
+                    <div class="col-md-3"><div class="card text-white bg-success"><div class="card-body"><h5 class="card-title">有效源</h5><p class="card-text display-6">${data.active_sources || 0}</p></div></div></div>
+                    <div class="col-md-3"><div class="card text-white bg-warning"><div class="card-body"><h5 class="card-title">最后测试</h5><p class="card-text">${data.last_test || '从未'}</p></div></div></div>
+                    <div class="col-md-3"><div class="card text-white bg-info"><div class="card-body"><h5 class="card-title">EPG节目数</h5><p class="card-text display-6">${data.epg_programs || 0}</p></div></div></div>
+                </div>
+            `;
+        }
+
+        // 源列表（示例）
+        async function loadSources() {
+            const sources = await apiGet(API_BASE + '/sources');
+            let html = `<h4>直播源管理</h4>
+                <button class="btn btn-primary btn-sm mb-3" onclick="showAddSourceModal()">添加源</button>
+                <div class="table-responsive">
+                <table class="table table-striped"><thead><tr><th>ID</th><th>名称</th><th>地址</th><th>状态</th><th>操作</th></tr></thead><tbody>`;
+            if (sources && sources.length) {
+                sources.forEach(src => {
+                    html += `<tr>
+                        <td>${src.id}</td>
+                        <td>${src.name}</td>
+                        <td>${src.url || src.location}</td>
+                        <td>${src.status || src.download_status || '-'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-info" onclick="testSource(${src.id})">测试</button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteSource(${src.id})">删除</button>
+                        </td>
+                    </tr>`;
+                });
+            } else html += `<tr><td colspan="5">暂无数据</td></tr>`;
+            html += `</tbody></table></div>`;
+            document.getElementById('page-sources').innerHTML = html;
+        }
+
+        // 其他页面类似实现（略）
+
+        // 初始化
+        window.onload = function() {
+            if (token) fetchAuthStatus();
+            else showPage('login');
+
+            document.getElementById('loginBtn').addEventListener('click', login);
+            document.getElementById('logoutBtn').addEventListener('click', logout);
+
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    if (!checkAuth()) return;
+                    showPage(this.dataset.page);
+                });
+            });
+        };
+    </script>
+</body>
+</html>
