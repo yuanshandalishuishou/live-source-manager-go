@@ -1,3 +1,5 @@
+// internal/progress/progress.go
+
 package progress
 
 import (
@@ -26,15 +28,13 @@ type Progress struct {
 type Manager struct {
 	mu        sync.RWMutex
 	tasks     map[string]*Progress
-	clients   map[*Client]bool // WebSocket 客户端，Client 定义略
-	broadcast chan interface{}
+	broadcast chan interface{} // 用于向 WebSocket 客户端广播进度快照
 }
 
 // NewManager 新建进度管理器
 func NewManager() *Manager {
 	return &Manager{
 		tasks:     make(map[string]*Progress),
-		clients:   make(map[*Client]bool),
 		broadcast: make(chan interface{}, 256),
 	}
 }
@@ -59,7 +59,7 @@ func (m *Manager) CreateTask(id string, total int) {
 	logger.Info("创建测试任务", "task_id", id, "total", total)
 }
 
-// Increment 递增计数并广播
+// Increment 递增计数并广播（非阻塞发送）
 func (m *Manager) Increment(taskID string, success bool) {
 	m.mu.RLock()
 	task, exists := m.tasks[taskID]
@@ -75,8 +75,12 @@ func (m *Manager) Increment(taskID string, success bool) {
 		task.FailedCount++
 	}
 	task.mu.Unlock()
-	// 发送广播到 WebSocket 客户端（此处简化为打印）
-	m.broadcast <- task.snapshot()
+	// 使用 select + default 进行非阻塞广播，防止客户端异常导致整个流程卡死
+	snapshot := task.snapshot()
+	select {
+	case m.broadcast <- snapshot:
+	default:
+	}
 }
 
 // FinishTask 标记任务完成
@@ -87,11 +91,20 @@ func (m *Manager) FinishTask(taskID string) {
 		task.mu.Lock()
 		task.Status = "finished"
 		task.mu.Unlock()
-		m.broadcast <- task.snapshot()
+
+		select {
+		case m.broadcast <- task.snapshot():
+		default:
+		}
 	}
 }
 
-// snapshot 获取任务快照（线程安全）
+// BroadcastChan 返回只读广播通道，供 WebSocket 使用
+func (m *Manager) BroadcastChan() <-chan interface{} {
+	return m.broadcast
+}
+
+// 以下 Progress 方法保持不变
 func (p *Progress) snapshot() ProgressSnapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -114,5 +127,3 @@ type ProgressSnapshot struct {
 	Failed  int    `json:"failed"`
 	Status  string `json:"status"`
 }
-
-// 省略 WebSocket 客户端管理与广播循环的具体实现，可根据项目 websocket.go 补充。
