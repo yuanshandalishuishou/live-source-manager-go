@@ -1,3 +1,5 @@
+// internal/tester/tester.go
+
 package tester
 
 import (
@@ -7,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -22,23 +23,39 @@ import (
 )
 
 // Tester 负责源的可达性与媒体信息测试
-// 特点：
-//   - 批量缓冲写入，减少数据库压力
-//   - 通过 context 支持优雅取消
-//   - 使用 ffprobe 参数数组防止命令注入
-//   - 归属地识别集成
 type Tester struct {
-	mu          sync.Mutex
-	cfg         *config.Config
-	db          *db.DB
-	geoResolver *geo.Resolver
-	progMgr     *progress.Manager
-	httpClient  *http.Client
-
+	mu            sync.Mutex
+	cfg           *config.Config
+	db            *db.DB
+	geoResolver   *geo.Resolver
+	progMgr       *progress.Manager
+	httpClient    *http.Client
 	batchBuffer   []*TestResult
 	batchMu       sync.Mutex
 	batchSize     int
 	flushInterval time.Duration
+}
+
+// NewTester 创建测试器实例，接受外部注入的 HTTP 客户端
+func NewTester(cfg *config.Config, database *db.DB, resolver *geo.Resolver, progMgr *progress.Manager, client *http.Client) *Tester {
+	bs := cfg.Testing.BatchSize
+	if bs <= 0 {
+		bs = 50
+	}
+	fi := cfg.Testing.FlushInterval
+	if fi <= 0 {
+		fi = 2
+	}
+	return &Tester{
+		cfg:           cfg,
+		db:            database,
+		geoResolver:   resolver,
+		progMgr:       progMgr,
+		httpClient:    client,
+		batchSize:     bs,
+		flushInterval: time.Duration(fi) * time.Second,
+		batchBuffer:   make([]*TestResult, 0, bs),
+	}
 }
 
 // TestResult 封装单个源的测试结果
