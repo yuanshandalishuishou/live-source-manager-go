@@ -3,6 +3,7 @@
 package logger
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"sync"
