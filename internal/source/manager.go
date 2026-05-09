@@ -1,3 +1,5 @@
+// internal/source/manager.go
+
 package source
 
 import (
@@ -24,15 +26,13 @@ type Manager struct {
 	parser     *Parser
 }
 
-// NewManager 创建下载管理器
-func NewManager(cfg *config.Config, database *db.DB, parser *Parser) *Manager {
+// NewManager 创建下载管理器，接受外部注入的 HTTP 客户端
+func NewManager(cfg *config.Config, database *db.DB, parser *Parser, client *http.Client) *Manager {
 	return &Manager{
-		cfg:    cfg,
-		db:     database,
-		parser: parser,
-		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
-		},
+		cfg:        cfg,
+		db:         database,
+		httpClient: client,
+		parser:     parser,
 	}
 }
 
