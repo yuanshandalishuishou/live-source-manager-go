@@ -101,30 +101,26 @@ func (m *Manager) Stop() {
 // executeTask 是真正执行任务的方法，包含文件锁的获取与释放。
 // 只有获取到文件锁的实例才会执行任务，从而避免多实例重复执行。
 func (m *Manager) executeTask() {
-	// 打开或创建锁文件
 	lockFile, err := os.OpenFile(m.lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		logger.Error("无法打开锁文件 %s: %v", m.lockPath, err)
+		logger.Error("无法打开锁文件: %v", err)
 		return
 	}
 	defer lockFile.Close()
 
-	// 尝试获取文件锁（非阻塞）
 	if err := LockFile(lockFile); err != nil {
-		logger.Info("未获取到分布式锁，任务可能正在由其他实例执行")
+		logger.Warn("未获取到分布式锁，跳过本次调度")
 		return
 	}
+	// 确保无论何种退出路径都会解锁
 	defer UnlockFile(lockFile)
 
-	// 执行实际任务，并设置超时上下文
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	logger.Info("开始执行调度任务...")
-	start := time.Now()
 	if err := m.taskFn(ctx); err != nil {
 		logger.Error("调度任务执行失败: %v", err)
 	} else {
-		logger.Info("调度任务执行成功，耗时: %s", time.Since(start))
+		logger.Info("调度任务执行成功")
 	}
 }
