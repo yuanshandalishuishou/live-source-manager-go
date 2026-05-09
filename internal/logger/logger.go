@@ -1,7 +1,8 @@
+// internal/logger/logger.go
+
 package logger
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"sync"
@@ -14,12 +15,12 @@ var (
 	once          sync.Once
 )
 
-// Logger 封装日志输出，可同时输出到控制台和数据库
+// Logger 封装日志输出
 type Logger struct {
 	stdLogger *log.Logger
 	db        interface {
 		InsertSystemLog(level, module, message, details string) error
-	} // 避免循环依赖
+	}
 }
 
 // Init 初始化全局日志实例（应在 main 中调用）
@@ -32,7 +33,7 @@ func Init(cfg *config.Config) {
 	})
 }
 
-// SetDBInserter 注入数据库插入器（在 main 中完成初始化后调用）
+// SetDBInserter 注入数据库插入器
 func SetDBInserter(db interface {
 	InsertSystemLog(level, module, message, details string) error
 }) {
