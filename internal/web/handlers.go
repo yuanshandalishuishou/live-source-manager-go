@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -94,9 +93,9 @@ func (h *Handler) handleStats(w http.ResponseWriter, r *http.Request) {
 	total := h.db.CountURLSources()
 	active := h.db.CountPassedByStatus("active")
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"total_sources":   total,
-		"active_sources":  active,
-		"last_test_time":  h.db.GetLastTestTime(),
+		"total_sources":      total,
+		"active_sources":     active,
+		"last_test_time":     h.db.GetLastTestTime(),
 		"total_epg_programs": h.db.CountEPGPrograms(),
 	})
 }
