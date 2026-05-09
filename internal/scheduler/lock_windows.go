@@ -1,4 +1,5 @@
 //go:build windows
+
 // internal/scheduler/lock_windows.go
 // 修正 Windows 锁：引入 golang.org/x/sys/windows 包，修复参数错误。
 package scheduler

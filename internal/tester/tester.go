@@ -19,7 +19,7 @@ import (
 
 // 常量定义
 const (
-	maxLineSize  = 16 * 1024 // 单行最大 16KB
+	maxLineSize   = 16 * 1024       // 单行最大 16KB
 	maxOutputSize = 4 * 1024 * 1024 // 总输出限制 4MB
 )
 
@@ -193,5 +193,5 @@ type ffprobeStream struct {
 	BitRate   string `json:"bit_rate"`
 }
 type ffprobeFormat struct {
-	BitRate  string `json:"bit_rate"`
+	BitRate string `json:"bit_rate"`
 }
