@@ -1,5 +1,5 @@
 // internal/generator/generator.go
-// 播放列表生成器，负责根据过滤后的数据生成 M3U/TXT 文件
+// 播放列表生成器，负责根据过滤后的数据生成 M3U/TXT 文件并推送 RTMP 更新
 package generator
 
 import (
@@ -37,13 +37,13 @@ func NewGenerator(cfg *config.Config, database *db.DB, f *filter.Filter) *Genera
 func (g *Generator) Generate() error {
 	logger.Info("开始生成播放列表...")
 
-	// 1. 获取活跃源
+	// 1. 获取活跃源（注意：这里应该使用 models.PassedSource，而不是 models.Source）
 	sources, err := g.db.GetActiveSources()
 	if err != nil {
 		return fmt.Errorf("获取活跃源失败: %w", err)
 	}
 
-	// 2. 应用全局过滤器（黑白名单）
+	// 2. 应用全局过滤器（黑白名单 + 质量）
 	sources = g.filter.Apply(sources)
 
 	// 3. 根据显示规则分组
@@ -82,12 +82,11 @@ func (g *Generator) Generate() error {
 }
 
 // groupByDisplayRules 根据数据库中的显示规则对源进行分组
-func (g *Generator) groupByDisplayRules(sources []models.Source) (map[string][]models.Source, error) {
+func (g *Generator) groupByDisplayRules(sources []models.PassedSource) (map[string][]models.PassedSource, error) {
 	rules, err := g.db.GetDisplayRules()
 	if err != nil {
 		return nil, fmt.Errorf("获取显示规则失败: %w", err)
 	}
-
 	// 编译正则表达式，缓存避免重复编译
 	compiledRules := make([]struct {
 		regex   *regexp.Regexp
@@ -112,7 +111,7 @@ func (g *Generator) groupByDisplayRules(sources []models.Source) (map[string][]m
 		})
 	}
 
-	groups := make(map[string][]models.Source)
+	groups := make(map[string][]models.PassedSource)
 	for _, src := range sources {
 		assigned := false
 		for _, cr := range compiledRules {
@@ -123,103 +122,92 @@ func (g *Generator) groupByDisplayRules(sources []models.Source) (map[string][]m
 			}
 		}
 		if !assigned {
-			groups["未分类"] = append(groups["未分类"], src)
+			// 按照原有 group 名分类，若无则归为“其他”
+			grp := src.GroupName
+			if grp == "" {
+				grp = "其他"
+			}
+			groups[grp] = append(groups[grp], src)
 		}
 	}
-
 	return groups, nil
 }
 
-// getQualifiedSources 根据质量筛选条件和每频道最大源数限制生成精选源
-func (g *Generator) getQualifiedSources(groups map[string][]models.Source) map[string][]models.Source {
-	qualified := make(map[string][]models.Source)
+// getQualifiedSources 从上一步分组中提取高质量源，并限制每个频道的数量
+func (g *Generator) getQualifiedSources(groups map[string][]models.PassedSource) map[string][]models.PassedSource {
 	maxPerChannel := g.cfg.Generator.MaxSourcesPerChannel
 	if maxPerChannel <= 0 {
 		maxPerChannel = 3
 	}
-
-	for group, sources := range groups {
-		// 按延迟升序排序（延迟低的优先）
-		sort.Slice(sources, func(i, j int) bool {
-			return sources[i].Latency < sources[j].Latency
+	result := make(map[string][]models.PassedSource)
+	for grp, srcs := range groups {
+		// 按延迟排序，取前 N 个
+		sort.Slice(srcs, func(i, j int) bool {
+			return srcs[i].Latency < srcs[j].Latency
 		})
-
-		// 应用分辨率过滤（如果配置了最低分辨率要求）
-		filtered := make([]models.Source, 0)
-		for _, src := range sources {
-			if g.cfg.Filter.MinResolution != "" {
-				// 简单的分辨率比较，实际应解析后比较
-				if !strings.Contains(src.Resolution, strings.ReplaceAll(g.cfg.Filter.MinResolution, "x", "×")) {
-					continue
-				}
-			}
-			filtered = append(filtered, src)
-		}
-
-		// 限制每个频道的源数量
-		if len(filtered) > maxPerChannel {
-			filtered = filtered[:maxPerChannel]
-		}
-
-		if len(filtered) > 0 {
-			qualified[group] = filtered
+		if len(srcs) > maxPerChannel {
+			result[grp] = srcs[:maxPerChannel]
+		} else {
+			result[grp] = srcs
 		}
 	}
-
-	return qualified
+	return result
 }
 
-// generateM3U 将分组数据写入 M3U 文件（带 EXTM3U 头部和分组信息）
-func (g *Generator) generateM3U(groups map[string][]models.Source, filename string) error {
-	f, err := os.Create(filename)
+// generateM3U 生成 M3U 格式的播放列表文件
+func (g *Generator) generateM3U(groups map[string][]models.PassedSource, filePath string) error {
+	f, err := os.Create(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("创建文件失败: %w", err)
 	}
 	defer f.Close()
 
 	// 写入 M3U 头部
-	f.WriteString("#EXTM3U\n")
-	f.WriteString("#PLAYLIST: 直播源管理工具 - 自动生成\n")
-	f.WriteString(fmt.Sprintf("#DATE: %s\n\n", fmt.Sprintf("%s", "..."))) // 可添加日期信息
+	_, _ = f.WriteString("#EXTM3U\n")
 
-	for group, srcs := range groups {
-		// 写入分组标题
-		f.WriteString(fmt.Sprintf("#PLAYLIST:%s\n", group))
-		for _, s := range srcs {
-			// 构建 EXINF 标签
-			extinf := fmt.Sprintf("#EXTINF:-1 group-title=\"%s\"", group)
-			if s.Resolution != "" {
-				extinf += fmt.Sprintf(" resolution=\"%s\"", s.Resolution)
-			}
-			if s.Bitrate > 0 {
-				bitrateMbps := float64(s.Bitrate) / 1000000.0
-				extinf += fmt.Sprintf(" bitrate=\"%.1fMbps\"", bitrateMbps)
-			}
-			extinf += "," + s.Name + "\n"
-			f.WriteString(extinf)
-			f.WriteString(s.URL + "\n")
-		}
-		f.WriteString("\n") // 分组之间空行分隔
+	// 收集频道名称并排序，保证输出稳定
+	var groupNames []string
+	for grp := range groups {
+		groupNames = append(groupNames, grp)
 	}
+	sort.Strings(groupNames)
 
+	for _, grp := range groupNames {
+		_, _ = f.WriteString(fmt.Sprintf("\n# 分组: %s\n", grp))
+		for _, src := range groups[grp] {
+			// 添加台标信息（如有）
+			logoAttr := ""
+			if src.LogoURL != "" {
+				logoAttr = fmt.Sprintf(` tvg-logo="%s"`, src.LogoURL)
+			}
+			extinf := fmt.Sprintf(`#EXTINF:-1 tvg-name="%s" group-title="%s"%s, %s`,
+				src.Name, grp, logoAttr, src.Name)
+			_, _ = f.WriteString(extinf + "\n")
+			_, _ = f.WriteString(src.URL + "\n")
+		}
+	}
 	return nil
 }
 
-// generateTXT 生成简单的 TXT 格式播放列表（频道名,URL）
-func (g *Generator) generateTXT(groups map[string][]models.Source, filename string) error {
-	f, err := os.Create(filename)
+// generateTXT 生成 TXT 格式的播放列表文件
+func (g *Generator) generateTXT(groups map[string][]models.PassedSource, filePath string) error {
+	f, err := os.Create(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("创建文件失败: %w", err)
 	}
 	defer f.Close()
 
-	for group, srcs := range groups {
-		f.WriteString(fmt.Sprintf("# 分类: %s\n", group))
-		for _, s := range srcs {
-			f.WriteString(fmt.Sprintf("%s,%s\n", s.Name, s.URL))
-		}
-		f.WriteString("\n")
+	var groupNames []string
+	for grp := range groups {
+		groupNames = append(groupNames, grp)
 	}
+	sort.Strings(groupNames)
 
+	for _, grp := range groupNames {
+		_, _ = f.WriteString(fmt.Sprintf("\n# 分组: %s\n", grp))
+		for _, src := range groups[grp] {
+			_, _ = f.WriteString(fmt.Sprintf("%s,%s\n", src.Name, src.URL))
+		}
+	}
 	return nil
 }
