@@ -1,5 +1,5 @@
 // cmd/manager/main.go
-// 应用主入口，初始化所有模块并启动 HTTP 服务。
+// 应用主入口，完整初始化所有模块并启动 HTTP 服务。
 
 package main
 
@@ -15,8 +15,12 @@ import (
 	"github.com/gorilla/mux"
 	"live-source-manager-go/internal/config"
 	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/filter"
+	"live-source-manager-go/internal/generator"
+	"live-source-manager-go/internal/rtmp"
 	"live-source-manager-go/internal/scheduler"
 	"live-source-manager-go/internal/tester"
+	"live-source-manager-go/internal/web"
 	"live-source-manager-go/pkg/logger"
 )
 
@@ -47,8 +51,21 @@ func main() {
 	}
 	defer database.Close()
 
-	// 4. 初始化调度器
-	sched := scheduler.New(database, cfg)
+	// 4. 初始化核心模块
+	// 过滤器
+	f := filter.NewFilter(database)
+	if err != nil {
+		logger.Fatal("初始化过滤器失败: %v", err)
+	}
+
+	// 生成器
+	gen := generator.NewGenerator(cfg, database, f)
+
+	// RTMP 管理器
+	rmtpMgr := rtmp.NewManager(context.Background(), cfg)
+
+	// 5. 初始化并启动调度器
+	sched := scheduler.New(database, cfg, gen, f) // 传入生成器和过滤器
 	if cfg.Scheduler.Enabled {
 		if err := sched.Start(); err != nil {
 			logger.Error("调度器启动失败: %v", err)
@@ -56,36 +73,23 @@ func main() {
 	}
 	defer sched.Stop()
 
-	// 5. 设置 HTTP 路由
+	// 6. 设置 HTTP 路由
 	router := mux.NewRouter()
 
-	// 静态文件
-	router.PathPrefix("/static/").Handler(
-		http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))),
-	)
+	// JWT 管理器
+	jwtMgr := web.NewJWTManager(cfg)
 
-	// API
-	api := router.PathPrefix("/api/v1").Subrouter()
-	api.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	}).Methods("GET")
+	// WebSocket 进度管理器
+	progressMgr := tester.NewProgressManager()
+	wsHandler := web.NewWSHandler(progressMgr)
 
-	api.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
-		go func() {
-			// 实例化进度管理器（可选，若要 WebSocket 推送请注入）
-			pm := tester.NewProgressManager(database.SQLDB())
-			t := tester.NewTester(cfg, database, pm, nil)
-			t.TestAll(context.Background())
-		}()
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"code":200,"message":"update started"}`))
-	}).Methods("POST")
+	// 注入所有依赖到 Web 应用
+	app := web.NewApp(cfg, database, jwtMgr, wsHandler, gen, f, progressMgr)
 
-	// 前端入口
-	router.PathPrefix("/").Handler(http.FileServer(http.Dir("web/static")))
+	// 注册所有路由
+	app.RegisterRoutes(router) // 改用显式的方法调用
 
-	// 6. 启动服务器
+	// 7. 启动服务器
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
 		Addr:         addr,
@@ -100,8 +104,14 @@ func main() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
+
 		logger.Info("收到关闭信号，正在退出...")
+		// 停止 RTMP 推流
+		rmtpMgr.Stop()
+
+		// 停止调度器
 		sched.Stop()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
