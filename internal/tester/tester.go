@@ -1,10 +1,10 @@
 // internal/tester/tester.go
 // 直播源并发测试器，依赖 ffprobe 进行流探测。
-
 package tester
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -31,7 +31,7 @@ type ProgressNotifier interface {
 type Tester struct {
 	cfg    *config.Config
 	db     *db.DB
-	prog   ProgressNotifier   // 可以为 nil
+	prog   ProgressNotifier // 可以为 nil
 	client *http.Client
 }
 
@@ -55,13 +55,11 @@ func (t *Tester) TestAll(ctx context.Context) {
 		logger.Error("获取待测源失败: %v", err)
 		return
 	}
-
 	total := len(sources)
 	if total == 0 {
 		logger.Info("没有待测源，跳过测试")
 		return
 	}
-
 	if t.prog != nil {
 		t.prog.SetTotal(total)
 	}
@@ -81,19 +79,15 @@ func (t *Tester) TestAll(ctx context.Context) {
 			return
 		default:
 		}
-
 		wg.Add(1)
 		sem <- struct{}{} // 获取令牌
-
 		go func(idx int) {
 			defer wg.Done()
 			defer func() { <-sem }() // 释放令牌
-
 			src := &sources[idx]
 			t.testSingleSource(ctx, src)
 		}(i)
 	}
-
 	wg.Wait()
 
 	if t.prog != nil {
@@ -127,32 +121,61 @@ func (t *Tester) testSingleSource(ctx context.Context, src *models.LiveSource) {
 		return
 	}
 
-	// 成功：更新状态，记录元数据
+	// 成功：更新状态，记录元数据到 passed 表
+	passed := &models.PassedSource{
+		URL:        url,
+		Name:       src.Name,
+		GroupName:  src.GroupTitle,
+		Resolution: fmt.Sprintf("%dx%d", meta.Width, meta.Height),
+		Bitrate:    meta.BitRate,
+		Latency:    float64(elapsed),
+		CheckedAt:  time.Now(),
+	}
+	if err := t.db.InsertPassedSource(passed); err != nil {
+		logger.Error("保存测试通过的源失败: %v", err)
+	}
 	t.db.UpdateLiveSourceStatus(src.ID, "success")
-	// 这里可以将 PassedSource 写入 passed 表，略
+
 	if t.prog != nil {
 		t.prog.IncrementSuccess()
 		msg := fmt.Sprintf(`{"url":"%s","status":"success","latency":%d,"codec":"%s","width":%d,"height":%d}`,
 			url, elapsed, meta.CodecName, meta.Width, meta.Height)
 		t.prog.Broadcast("test_result", msg)
 	}
-
 	logger.Debug("测试成功 %s (耗时 %dms)", url, elapsed)
 }
 
-// probe 调用 ffprobe 获取流信息。
+// ffprobeOutput 定义 ffprobe JSON 输出的顶层结构
+type ffprobeOutput struct {
+	Streams []ffprobeStream `json:"streams"`
+}
+
+type ffprobeStream struct {
+	CodecType string `json:"codec_type"`
+	CodecName string `json:"codec_name"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	BitRate   string `json:"bit_rate"` // ffprobe 中比特率为字符串
+}
+
+// probe 调用 ffprobe 获取流信息并完整解析返回结果。
 func (t *Tester) probe(ctx context.Context, url string) (*models.StreamMeta, error) {
 	ffprobePath := t.cfg.Tester.FfprobePath
 	if ffprobePath == "" {
 		ffprobePath = "ffprobe"
 	}
+	timeout := t.cfg.Tester.Timeout
+	if timeout <= 0 {
+		timeout = 8 // 默认 8 秒
+	}
+
 	args := []string{
 		"-v", "quiet",
 		"-print_format", "json",
 		"-show_streams",
-		"-select_streams", "v",
+		"-select_streams", "v",     // 只选择视频流
+		"-timeout", fmt.Sprintf("%d", timeout*1000000), // 超时（微秒）
 		"-i", url,
-		"-timeout", "5000000", // 5秒超时（微秒）
 	}
 
 	cmd := exec.CommandContext(ctx, ffprobePath, args...)
@@ -161,15 +184,31 @@ func (t *Tester) probe(ctx context.Context, url string) (*models.StreamMeta, err
 		return nil, fmt.Errorf("ffprobe 执行失败: %w", err)
 	}
 
-	// 简单解析 JSON（实际项目中可用 json.Unmarshal 到结构体）
-	var meta models.StreamMeta
-	// 这里假定 ffprobe 输出包含 "streams" 数组，取第一个 video stream
-	// 为简化示例，直接填充假数据，完整解析请根据 ffprobe json 结构实现。
-	_ = out
-	meta.CodecName = "h264"
-	meta.Width = 1920
-	meta.Height = 1080
-	meta.CodecType = "video"
+	// 解析 ffprobe 的 JSON 输出
+	var output ffprobeOutput
+	if err := json.Unmarshal(out, &output); err != nil {
+		return nil, fmt.Errorf("ffprobe 输出解析失败: %w", err)
+	}
 
-	return &meta, nil
+	if len(output.Streams) == 0 {
+		return nil, fmt.Errorf("ffprobe 输出中未找到视频流")
+	}
+
+	// 取第一个视频流的信息
+	stream := output.Streams[0]
+	meta := &models.StreamMeta{
+		CodecType: stream.CodecType,
+		CodecName: stream.CodecName,
+		Width:     stream.Width,
+		Height:    stream.Height,
+	}
+
+	// 比特率可能是数字字符串，需要转换
+	if stream.BitRate != "" {
+		var bitrate int64
+		fmt.Sscanf(stream.BitRate, "%d", &bitrate)
+		meta.BitRate = bitrate
+	}
+
+	return meta, nil
 }
