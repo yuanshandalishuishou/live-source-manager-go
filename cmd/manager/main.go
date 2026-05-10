@@ -1,91 +1,114 @@
 // cmd/manager/main.go
-// 主入口，负责初始化所有模块并启动 Web 服务与调度器。
-// 修复：先前版本内容被错误地替换为 admin/handler.go，现已恢复核心启动逻辑。
+// 应用主入口，初始化所有模块并启动 HTTP 服务。
+
 package main
 
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"syscall"
 	"time"
 
+	"github.com/gorilla/mux"
 	"live-source-manager-go/internal/config"
 	"live-source-manager-go/internal/db"
 	"live-source-manager-go/internal/scheduler"
-	"live-source-manager-go/internal/web"
+	"live-source-manager-go/internal/tester"
+	"live-source-manager-go/pkg/logger"
 )
 
 func main() {
 	// 1. 加载配置
-	cfg, err := config.Load("config.ini")
-	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+	cfgPath := "configs/config.ini"
+	if len(os.Args) > 1 {
+		cfgPath = os.Args[1]
 	}
-	if err := cfg.Validate(); err != nil {
-		log.Fatalf("配置校验失败: %v", err)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
+		os.Exit(1)
 	}
 
-	// 2. 初始化数据库
-	database, err := db.NewDB(cfg.Database.Path)
+	// 2. 初始化日志
+	log, err := logger.New(cfg.Logging.File, logger.INFO)
 	if err != nil {
-		log.Fatalf("数据库初始化失败: %v", err)
+		fmt.Fprintf(os.Stderr, "初始化日志失败: %v\n", err)
+		os.Exit(1)
+	}
+	logger.SetDefault(log)
+
+	// 3. 初始化数据库
+	database, err := db.New(cfg.Database.Path)
+	if err != nil {
+		logger.Fatal("数据库初始化失败: %v", err)
 	}
 	defer database.Close()
 
-	// 3. 初始化 Web 应用（不启用 JWT 和 WebSocket）
-	webApp := web.NewApp(cfg, database)
-
-	// 4. 启动 Web 服务
-	go func() {
-		addr := fmt.Sprintf(":%d", cfg.Server.Port)
-		log.Printf("Web 管理后台启动于 http://localhost%s", addr)
-		if err := webApp.Start(addr); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Web 服务启动失败: %v", err)
+	// 4. 初始化调度器
+	sched := scheduler.New(database, cfg)
+	if cfg.Scheduler.Enabled {
+		if err := sched.Start(); err != nil {
+			logger.Error("调度器启动失败: %v", err)
 		}
-	}()
-
-	// 5. 定时任务函数（核心业务逻辑待集成）
-	taskFunc := func(ctx context.Context) error {
-		log.Println("计划任务执行中...")
-		// TODO: 集成 collector、tester、filter、generator 等模块
-		return nil
-	}
-
-	// 6. 启动调度器
-	sched := scheduler.NewManager(cfg, taskFunc)
-	if err := sched.Start(); err != nil {
-		log.Fatalf("启动调度器失败: %v", err)
 	}
 	defer sched.Stop()
 
-	// 7. 首次执行任务（异步，带 panic 恢复）
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("首次任务发生 panic 并已恢复: %v\n堆栈: %s", r, string(debug.Stack()))
-			}
+	// 5. 设置 HTTP 路由
+	router := mux.NewRouter()
+
+	// 静态文件
+	router.PathPrefix("/static/").Handler(
+		http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))),
+	)
+
+	// API
+	api := router.PathPrefix("/api/v1").Subrouter()
+	api.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	}).Methods("GET")
+
+	api.HandleFunc("/update", func(w http.ResponseWriter, r *http.Request) {
+		go func() {
+			// 实例化进度管理器（可选，若要 WebSocket 推送请注入）
+			pm := tester.NewProgressManager(database.SQLDB())
+			t := tester.NewTester(cfg, database, pm, nil)
+			t.TestAll(context.Background())
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"code":200,"message":"update started"}`))
+	}).Methods("POST")
+
+	// 前端入口
+	router.PathPrefix("/").Handler(http.FileServer(http.Dir("web/static")))
+
+	// 6. 启动服务器
+	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// 优雅关闭
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		logger.Info("收到关闭信号，正在退出...")
+		sched.Stop()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := taskFunc(ctx); err != nil {
-			log.Printf("首次任务执行失败: %v", err)
-		}
+		srv.Shutdown(ctx)
 	}()
 
-	// 8. 等待退出信号
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("收到退出信号，正在关闭服务...")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := webApp.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Web 服务关闭出错: %v", err)
+	logger.Info("服务器启动在 %s", addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Fatal("服务器启动失败: %v", err)
 	}
 }
