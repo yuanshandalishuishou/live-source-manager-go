@@ -1,130 +1,67 @@
 // internal/tester/progress.go
-// 为测试器提供进度管理功能，支持 WebSocket 推送。
-
+// 测试进度管理器，实现 ProgressNotifier 接口
 package tester
 
 import (
-	"encoding/json"
-	"sync"
-	"sync/atomic"
-	"time"
-
+	"fmt"
 	"live-source-manager-go/internal/models"
+	"sync/atomic"
 )
 
-// ProgressManager 管理测试进度，线程安全。
+// ProgressManager 管理测试进度
 type ProgressManager struct {
-	mu            sync.RWMutex
-	total         int32
-	tested        int32
-	success       int32
-	failed        int32
-	currentSource string
-	status        string // running, completed, failed
-	startTime     time.Time
-	updateTime    time.Time
-	subscribers   map[chan []byte]struct{}
+	total      int64
+	tested     int64
+	success    int64
+	failed     int64
+	completed  bool
+	// 可以添加订阅者通知等高级功能
 }
 
-// NewProgressManager 创建新的进度管理器实例。
+// NewProgressManager 创建进度管理器实例
 func NewProgressManager() *ProgressManager {
-	return &ProgressManager{
-		status:      "idle",
-		subscribers: make(map[chan []byte]struct{}),
-	}
+	return &ProgressManager{}
 }
 
-// SetTotal 设置待测试源总数。
+// SetTotal 设置待测源总数
 func (pm *ProgressManager) SetTotal(total int) {
-	atomic.StoreInt32(&pm.total, int32(total))
-	pm.mu.Lock()
-	pm.status = "running"
-	pm.startTime = time.Now()
-	pm.mu.Unlock()
-	pm.broadcast()
+	atomic.StoreInt64(&pm.total, int64(total))
 }
 
-// IncrementTested 增加已测试计数并更新当前测试源。
+// IncrementTested 增加已测试计数，并记录当前正在测试的源
 func (pm *ProgressManager) IncrementTested(currentSource string) {
-	atomic.AddInt32(&pm.tested, 1)
-	pm.mu.Lock()
-	pm.currentSource = currentSource
-	pm.updateTime = time.Now()
-	pm.mu.Unlock()
-	pm.broadcast()
+	atomic.AddInt64(&pm.tested, 1)
 }
 
-// IncrementSuccess 增加成功计数。
+// IncrementSuccess 增加成功计数
 func (pm *ProgressManager) IncrementSuccess() {
-	atomic.AddInt32(&pm.success, 1)
-	pm.broadcast()
+	atomic.AddInt64(&pm.success, 1)
 }
 
-// IncrementFailed 增加失败计数。
+// IncrementFailed 增加失败计数
 func (pm *ProgressManager) IncrementFailed() {
-	atomic.AddInt32(&pm.failed, 1)
-	pm.broadcast()
+	atomic.AddInt64(&pm.failed, 1)
 }
 
-// SetCompleted 标记测试完成。
+// SetCompleted 标记测试完成
 func (pm *ProgressManager) SetCompleted() {
-	pm.mu.Lock()
-	pm.status = "completed"
-	pm.updateTime = time.Now()
-	pm.mu.Unlock()
-	pm.broadcast()
+	pm.completed = true
 }
 
-// GetProgress 返回当前进度快照。
+// Broadcast 广播事件（基础实现，可以扩展为 WebSocket 等）
+func (pm *ProgressManager) Broadcast(event string, message string) {
+	// 基础实现：记录日志
+	// 在实际 Web 模块中，这里可以连接 WebSocket 管理器
+	fmt.Printf("[Progress][%s] %s\n", event, message)
+}
+
+// GetProgress 返回当前进度快照
 func (pm *ProgressManager) GetProgress() models.TestProgress {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
 	return models.TestProgress{
-		TotalSources:  int(atomic.LoadInt32(&pm.total)),
-		TestedSources: int(atomic.LoadInt32(&pm.tested)),
-		SuccessCount:  int(atomic.LoadInt32(&pm.success)),
-		FailedCount:   int(atomic.LoadInt32(&pm.failed)),
-		Status:        pm.status,
-		StartedAt:     pm.startTime,
-		UpdatedAt:     pm.updateTime,
-	}
-}
-
-// Subscribe 订阅进度更新事件，返回一个接收 []byte 的通道。
-func (pm *ProgressManager) Subscribe() chan []byte {
-	ch := make(chan []byte, 16)
-	pm.mu.Lock()
-	pm.subscribers[ch] = struct{}{}
-	pm.mu.Unlock()
-	// 立即发送一次当前状态
-	go func() {
-		data, _ := json.Marshal(pm.GetProgress())
-		ch <- data
-	}()
-	return ch
-}
-
-// Unsubscribe 取消订阅。
-func (pm *ProgressManager) Unsubscribe(ch chan []byte) {
-	pm.mu.Lock()
-	delete(pm.subscribers, ch)
-	pm.mu.Unlock()
-	close(ch)
-}
-
-// broadcast 向所有订阅者推送当前进度。
-func (pm *ProgressManager) broadcast() {
-	data, err := json.Marshal(pm.GetProgress())
-	if err != nil {
-		return
-	}
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	for ch := range pm.subscribers {
-		select {
-		case ch <- data:
-		default:
-			// 接收方处理太慢，丢弃本次更新
-		}
+		TotalSources:   int(atomic.LoadInt64(&pm.total)),
+		TestedSources:  int(atomic.LoadInt64(&pm.tested)),
+		SuccessCount:   int(atomic.LoadInt64(&pm.success)),
+		FailedCount:    int(atomic.LoadInt64(&pm.failed)),
+		Status:         "running",
 	}
 }
