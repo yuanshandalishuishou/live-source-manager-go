@@ -416,3 +416,113 @@ func (d *DB) DeleteCategory(id int) error {
 	_, err := d.conn.Exec("DELETE FROM categories WHERE id=?", id)
 	return err
 }
+// GetSourcesPage 分页查询订阅源列表。
+func (d *DB) GetSourcesPage(page, limit int, status, search string) ([]models.LiveSource, int, error) {
+	// 构建查询
+	offset := (page - 1) * limit
+	query := "SELECT id, name, location, location_type, enable, last_download, download_status, http_status, retry_count FROM live_sources WHERE deleted_at IS NULL"
+	countQuery := "SELECT COUNT(*) FROM live_sources WHERE deleted_at IS NULL"
+	args := []interface{}{}
+	if status != "" {
+		query += " AND download_status = ?"
+		countQuery += " AND download_status = ?"
+		args = append(args, status)
+	}
+	if search != "" {
+		query += " AND (name LIKE ? OR location LIKE ?)"
+		countQuery += " AND (name LIKE ? OR location LIKE ?)"
+		s := "%" + search + "%"
+		args = append(args, s, s)
+	}
+	query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	var total int
+	if err := d.conn.QueryRow(countQuery, args[:len(args)-2]...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := d.conn.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var sources []models.LiveSource
+	for rows.Next() {
+		var s models.LiveSource
+		if err := rows.Scan(&s.ID, &s.Name, &s.Location, &s.LocationType, &s.Enable, &s.LastDownload, &s.DownloadStatus, &s.HTTPStatus, &s.RetryCount); err != nil {
+			return nil, 0, err
+		}
+		sources = append(sources, s)
+	}
+	return sources, total, rows.Err()
+}
+
+// InsertSource 添加一个直播源。
+func (d *DB) InsertSource(name, location string) (int64, error) {
+	res, err := d.conn.Exec("INSERT INTO live_sources (name, location) VALUES (?, ?)", name, location)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// SoftDeleteSource 软删除源（设置 deleted_at）。
+func (d *DB) SoftDeleteSource(id int) error {
+	_, err := d.conn.Exec("UPDATE live_sources SET deleted_at = datetime('now') WHERE id = ?", id)
+	return err
+}
+
+// GetSourceByID 根据 ID 获取源，含 URL 字段别名。
+func (d *DB) GetSourceByID(id int) (*models.URLSource, error) {
+	// 这里简单实现，从 url_sources_passed 或 live_sources 查询
+	var src models.URLSource
+	err := d.conn.QueryRow("SELECT id, name, location FROM live_sources WHERE id = ?", id).Scan(&src.LiveSourceID, &src.Name, &src.URL)
+	if err != nil {
+		return nil, err
+	}
+	return &src, nil
+}
+
+// InsertURLSource 将一条 URL 源插入 url_sources_passed 表。
+func (d *DB) InsertURLSource(src models.URLSource) error {
+	_, err := d.conn.Exec(
+		`INSERT INTO url_sources_passed (name, url, group_name, logo, status) VALUES (?, ?, ?, ?, ?)`,
+		src.Name, src.URL, src.GroupTitle, src.TvgLogo, "active",
+	)
+	return err
+}
+
+// GetActiveLiveSources 获取所有激活的直播订阅源。
+func (d *DB) GetActiveLiveSources() ([]models.LiveSource, error) {
+	rows, err := d.conn.Query("SELECT id, name, location, location_type, enable FROM live_sources WHERE enable = 1 AND deleted_at IS NULL")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sources []models.LiveSource
+	for rows.Next() {
+		var s models.LiveSource
+		if err := rows.Scan(&s.ID, &s.Name, &s.Location, &s.LocationType, &s.Enable); err != nil {
+			return nil, err
+		}
+		sources = append(sources, s)
+	}
+	return sources, rows.Err()
+}
+
+// CreateCategory 创建新分类。
+func (d *DB) CreateCategory(cat *models.Category) (int64, error) {
+	res, err := d.conn.Exec("INSERT INTO categories (name, keywords) VALUES (?, ?)", cat.Name, cat.Keywords)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// GetM3UContent 获取生成的 M3U 内容（简单实现，实际由 generator 写入文件后读取）。
+func (d *DB) GetM3UContent() (string, error) {
+	// 简单示例：返回硬编码内容或从文件读取
+	return "#EXTM3U\n", nil
+}
