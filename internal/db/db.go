@@ -1,245 +1,154 @@
 // internal/db/db.go
-// SQLite 数据库初始化、迁移、CRUD。
+// 数据库连接管理、自动创建/下载、表迁移
 
 package db
 
 import (
 	"database/sql"
 	"fmt"
-	"sync/atomic"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
 
-	_ "github.com/mattn/go-sqlite3"
-	"live-source-manager-go/internal/models"
-	"live-source-manager-go/pkg/logger"
+	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动
 )
 
-// DB 数据库操作封装。
+// DB 封装数据库连接和常用操作
 type DB struct {
 	conn *sql.DB
+	path string
 }
 
-// New 创建数据库连接并执行迁移。
-func New(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_sync=1")
+// New 初始化数据库连接。
+// 如果数据库文件不存在，会尝试从远程 URL 下载（若配置），否则本地创建。
+func New(dbPath string) (*DB, error) {
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建数据库目录失败: %w", err)
+	}
+
+	// 检查数据库文件是否存在
+	needInit := false
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		needInit = true
+		// 尝试从远程 URL 下载数据库（优先级最高）
+		if err := downloadDatabase(dbPath); err != nil {
+			// 下载失败则本地创建，这是正常情况
+			fmt.Printf("远程数据库未配置或下载失败，将本地创建: %v\n", err)
+		}
+	}
+
+	conn, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
-	db := &DB{conn: conn}
-	if err := db.migrate(); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("数据库迁移失败: %w", err)
+
+	db := &DB{conn: conn, path: dbPath}
+
+	if needInit {
+		if err := db.migrate(); err != nil {
+			return nil, fmt.Errorf("数据库迁移失败: %w", err)
+		}
+	} else {
+		// 即使文件已存在，也运行迁移以添加可能缺失的表/列
+		if err := db.migrate(); err != nil {
+			return nil, fmt.Errorf("数据库迁移失败: %w", err)
+		}
 	}
+
 	return db, nil
 }
 
-// SQLDB 暴露底层 *sql.DB，供 ProgressManager 等组件使用。
-func (db *DB) SQLDB() *sql.DB {
-	return db.conn
-}
-
-func (db *DB) migrate() error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS live_sources (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			url TEXT NOT NULL UNIQUE,
-			name TEXT,
-			group_title TEXT DEFAULT '',
-			status TEXT DEFAULT 'pending',
-			source_id INTEGER DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS url_sources (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			live_source_id INTEGER,
-			url TEXT NOT NULL,
-			name TEXT,
-			group_title TEXT,
-			FOREIGN KEY(live_source_id) REFERENCES live_sources(id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS hotel_scan_configs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			ip_range TEXT NOT NULL,
-			port INTEGER DEFAULT 80,
-			path TEXT DEFAULT '/iptv.m3u',
-			enabled INTEGER DEFAULT 1
-		)`,
-		`CREATE TABLE IF NOT EXISTS test_progress (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			task_id TEXT UNIQUE,
-			total_sources INTEGER DEFAULT 0,
-			tested_sources INTEGER DEFAULT 0,
-			success_count INTEGER DEFAULT 0,
-			failed_count INTEGER DEFAULT 0,
-			status TEXT DEFAULT 'running',
-			started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS filter_rules (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			pattern TEXT NOT NULL,
-			target_type TEXT DEFAULT 'name',
-			enable INTEGER DEFAULT 1,
-			priority INTEGER DEFAULT 0,
-			rule_type TEXT DEFAULT 'blacklist'
-		)`,
-		`CREATE TABLE IF NOT EXISTS filter_version (
-			id INTEGER PRIMARY KEY,
-			version INTEGER NOT NULL DEFAULT 1
-		)`,
-		`INSERT OR IGNORE INTO filter_version(id, version) VALUES(1, 1)`,
-	}
-	for _, st := range stmts {
-		if _, err := db.conn.Exec(st); err != nil {
-			return fmt.Errorf("执行DDL失败: %w", err)
-		}
-	}
-	return nil
-}
-
-// Close 关闭数据库连接。
+// Close 关闭数据库连接
 func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-// ─────── 酒店扫描相关 ───────
+// Conn 返回原始 sql.DB 连接，供其他模块直接使用
+func (db *DB) Conn() *sql.DB {
+	return db.conn
+}
 
-func (db *DB) GetHotelScanConfigs() ([]models.HotelScanConfig, error) {
-	rows, err := db.conn.Query("SELECT id, ip_range, port, path FROM hotel_scan_configs WHERE enabled=1")
+// downloadDatabase 尝试从环境变量或配置的 URL 下载数据库文件
+func downloadDatabase(destPath string) error {
+	remoteURL := os.Getenv("REMOTE_DB_URL") // 可通过环境变量配置
+	if remoteURL == "" {
+		return fmt.Errorf("未配置 REMOTE_DB_URL")
+	}
+
+	resp, err := http.Get(remoteURL)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("下载请求失败: %w", err)
 	}
-	defer rows.Close()
-	var list []models.HotelScanConfig
-	for rows.Next() {
-		var c models.HotelScanConfig
-		if err := rows.Scan(&c.ID, &c.IPRange, &c.Port, &c.Path); err != nil {
-			return nil, err
-		}
-		c.Enabled = true
-		list = append(list, c)
-	}
-	return list, rows.Err()
-}
+	defer resp.Body.Close()
 
-func (db *DB) BatchInsertURLSources(liveSourceID int, entries []models.URLSource) (int, error) {
-	tx, err := db.conn.Begin()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载返回状态码: %d", resp.StatusCode)
+	}
+
+	file, err := os.Create(destPath)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("创建目标文件失败: %w", err)
 	}
-	defer tx.Rollback()
-	stmt, err := tx.Prepare("INSERT OR IGNORE INTO url_sources(live_source_id, url, name, group_title) VALUES(?,?,?,?)")
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-	count := 0
-	for _, e := range entries {
-		if _, err := stmt.Exec(liveSourceID, e.URL, e.Name, e.GroupTitle); err == nil {
-			count++
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
+	defer file.Close()
 
-func (db *DB) UpdateHotelScanStats(configID int, found int) {
-	db.conn.Exec("UPDATE hotel_scan_configs SET last_scan_time=CURRENT_TIMESTAMP, last_found=? WHERE id=?", found, configID)
-}
-
-// ─────── 直播源相关 ───────
-
-func (db *DB) InsertLiveSource(ls *models.LiveSource) (int64, error) {
-	res, err := db.conn.Exec("INSERT INTO live_sources(url, name, group_title, status, source_id) VALUES(?,?,?,?,?)",
-		ls.URL, ls.Name, ls.GroupTitle, ls.Status, ls.SourceID)
-	if err != nil {
-		return 0, err
+	if _, err := io.Copy(file, resp.Body); err != nil {
+		return fmt.Errorf("写入数据库文件失败: %w", err)
 	}
-	return res.LastInsertId()
-}
-
-func (db *DB) GetAllLiveSources() ([]models.LiveSource, error) {
-	rows, err := db.conn.Query("SELECT id, url, name, group_title, status, source_id, created_at, updated_at FROM live_sources")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []models.LiveSource
-	for rows.Next() {
-		var s models.LiveSource
-		if err := rows.Scan(&s.ID, &s.URL, &s.Name, &s.GroupTitle, &s.Status, &s.SourceID, &s.CreatedAt, &s.UpdatedAt); err != nil {
-			return nil, err
-		}
-		list = append(list, s)
-	}
-	return list, rows.Err()
-}
-
-func (db *DB) UpdateLiveSourceStatus(id int, status string) {
-	db.conn.Exec("UPDATE live_sources SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", status, id)
-}
-
-// ─────── 过滤规则相关 ───────
-
-func (db *DB) GetFilterVersion() (int64, error) {
-	var v int64
-	err := db.conn.QueryRow("SELECT version FROM filter_version WHERE id=1").Scan(&v)
-	return v, err
-}
-
-func (db *DB) GetActiveWhitelistRules() ([]models.FilterRule, error) {
-	rows, err := db.conn.Query("SELECT id, pattern, target_type, enable, priority FROM filter_rules WHERE rule_type='whitelist' AND enable=1")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var rules []models.FilterRule
-	for rows.Next() {
-		var r models.FilterRule
-		if err := rows.Scan(&r.ID, &r.Pattern, &r.TargetType, &r.Enable, &r.Priority); err != nil {
-			return nil, err
-		}
-		r.RuleType = "whitelist"
-		rules = append(rules, r)
-	}
-	return rules, rows.Err()
-}
-
-func (db *DB) GetActiveBlacklistRules() ([]models.FilterRule, error) {
-	rows, err := db.conn.Query("SELECT id, pattern, target_type, enable, priority FROM filter_rules WHERE rule_type='blacklist' AND enable=1")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var rules []models.FilterRule
-	for rows.Next() {
-		var r models.FilterRule
-		if err := rows.Scan(&r.ID, &r.Pattern, &r.TargetType, &r.Enable, &r.Priority); err != nil {
-			return nil, err
-		}
-		r.RuleType = "blacklist"
-		rules = append(rules, r)
-	}
-	return rules, rows.Err()
-}
-
-// IncrementFilterVersion 规则变更后递增版本号。
-func (db *DB) IncrementFilterVersion() error {
-	_, err := db.conn.Exec("UPDATE filter_version SET version = version + 1 WHERE id=1")
-	if err != nil {
-		return err
-	}
-	v, _ := db.GetFilterVersion()
-	globalFilterVersion.Store(v)
 	return nil
 }
 
-// 全局过滤器版本，供 filter 包热加载。
-var globalFilterVersion atomic.Int64
+// migrate 执行数据库模式迁移（建表、添加索引等）
+func (db *DB) migrate() error {
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS sources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			url TEXT NOT NULL,
+			name TEXT,
+			group_name TEXT,
+			logo TEXT,
+			latency INTEGER DEFAULT 0,
+			status TEXT DEFAULT 'unknown',
+			last_check DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS filter_rules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL DEFAULT 'blacklist', -- blacklist / whitelist
+			pattern TEXT NOT NULL,
+			field TEXT NOT NULL DEFAULT 'name',     -- name / url / group
+			is_regex INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS display_rules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			match_pattern TEXT NOT NULL,      -- 频道名匹配正则
+			display_group TEXT NOT NULL,      -- 显示分组名
+			priority INTEGER DEFAULT 0,       -- 优先级，数字越小越高
+			enabled INTEGER DEFAULT 1,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS epg_data (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel_name TEXT NOT NULL,
+			start_time DATETIME NOT NULL,
+			end_time DATETIME NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
+			category TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sources_url ON sources(url)`,
+		`CREATE INDEX IF NOT EXISTS idx_epg_channel_time ON epg_data(channel_name, start_time)`,
+	}
 
-// GetGlobalFilterVersion 返回当前过滤规则版本。
-func GetGlobalFilterVersion() int64 {
-	return globalFilterVersion.Load()
+	for _, q := range queries {
+		if _, err := db.conn.Exec(q); err != nil {
+			return fmt.Errorf("执行SQL失败: %q, 错误: %w", q, err)
+		}
+	}
+	return nil
 }
