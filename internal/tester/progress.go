@@ -1,105 +1,130 @@
-// internal/source/parser.go
-// M3U / TXT 格式解析器。
+// internal/tester/progress.go
+// 为测试器提供进度管理功能，支持 WebSocket 推送。
 
-package source
+package tester
 
 import (
-	"bufio"
-	"strings"
+	"encoding/json"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"live-source-manager-go/internal/models"
 )
 
-// Parser 直播源文本解析器。
-type Parser struct{}
-
-// NewParser 创建解析器实例。
-func NewParser() *Parser {
-	return &Parser{}
+// ProgressManager 管理测试进度，线程安全。
+type ProgressManager struct {
+	mu            sync.RWMutex
+	total         int32
+	tested        int32
+	success       int32
+	failed        int32
+	currentSource string
+	status        string // running, completed, failed
+	startTime     time.Time
+	updateTime    time.Time
+	subscribers   map[chan []byte]struct{}
 }
 
-// Parse 自动识别格式并解析为 URLSource 列表。
-func (p *Parser) Parse(content string) []models.URLSource {
-	if strings.Contains(content, "#EXTM3U") {
-		return p.parseM3U(content)
+// NewProgressManager 创建新的进度管理器实例。
+func NewProgressManager() *ProgressManager {
+	return &ProgressManager{
+		status:      "idle",
+		subscribers: make(map[chan []byte]struct{}),
 	}
-	return p.parseTXT(content)
 }
 
-// parseM3U 解析 M3U/M3U8 格式。
-func (p *Parser) parseM3U(content string) []models.URLSource {
-	var result []models.URLSource
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	var name, group string
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#EXTINF:") {
-			name = extractName(line)
-			group = extractAttr(line, `group-title="`, `"`)
-		} else if !strings.HasPrefix(line, "#") {
-			url := line
-			if strings.HasPrefix(url, "http") || strings.HasPrefix(url, "rtmp") || strings.HasPrefix(url, "rtsp") {
-				result = append(result, models.URLSource{
-					URL:        url,
-					Name:       name,
-					GroupTitle: group,
-				})
-			}
-		}
-	}
-	return result
+// SetTotal 设置待测试源总数。
+func (pm *ProgressManager) SetTotal(total int) {
+	atomic.StoreInt32(&pm.total, int32(total))
+	pm.mu.Lock()
+	pm.status = "running"
+	pm.startTime = time.Now()
+	pm.mu.Unlock()
+	pm.broadcast()
 }
 
-// parseTXT 解析简单 TXT 格式：名称,URL。
-func (p *Parser) parseTXT(content string) []models.URLSource {
-	var result []models.URLSource
-	scanner := bufio.NewScanner(strings.NewReader(content))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, ",", 2)
-		if len(parts) == 2 {
-			result = append(result, models.URLSource{
-				Name: strings.TrimSpace(parts[0]),
-				URL:  strings.TrimSpace(parts[1]),
-			})
-		}
-	}
-	return result
+// IncrementTested 增加已测试计数并更新当前测试源。
+func (pm *ProgressManager) IncrementTested(currentSource string) {
+	atomic.AddInt32(&pm.tested, 1)
+	pm.mu.Lock()
+	pm.currentSource = currentSource
+	pm.updateTime = time.Now()
+	pm.mu.Unlock()
+	pm.broadcast()
 }
 
-// ----- 辅助函数 -----
-
-func extractName(line string) string {
-	idx := strings.LastIndex(line, ",")
-	if idx >= 0 && idx+1 < len(line) {
-		return strings.TrimSpace(line[idx+1:])
-	}
-	start := strings.Index(line, `"`)
-	if start >= 0 {
-		end := strings.Index(line[start+1:], `"`)
-		if end >= 0 {
-			return line[start+1 : start+1+end]
-		}
-	}
-	return ""
+// IncrementSuccess 增加成功计数。
+func (pm *ProgressManager) IncrementSuccess() {
+	atomic.AddInt32(&pm.success, 1)
+	pm.broadcast()
 }
 
-func extractAttr(line, attr, endChar string) string {
-	start := strings.Index(line, attr)
-	if start < 0 {
-		return ""
+// IncrementFailed 增加失败计数。
+func (pm *ProgressManager) IncrementFailed() {
+	atomic.AddInt32(&pm.failed, 1)
+	pm.broadcast()
+}
+
+// SetCompleted 标记测试完成。
+func (pm *ProgressManager) SetCompleted() {
+	pm.mu.Lock()
+	pm.status = "completed"
+	pm.updateTime = time.Now()
+	pm.mu.Unlock()
+	pm.broadcast()
+}
+
+// GetProgress 返回当前进度快照。
+func (pm *ProgressManager) GetProgress() models.TestProgress {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return models.TestProgress{
+		TotalSources:  int(atomic.LoadInt32(&pm.total)),
+		TestedSources: int(atomic.LoadInt32(&pm.tested)),
+		SuccessCount:  int(atomic.LoadInt32(&pm.success)),
+		FailedCount:   int(atomic.LoadInt32(&pm.failed)),
+		Status:        pm.status,
+		StartedAt:     pm.startTime,
+		UpdatedAt:     pm.updateTime,
 	}
-	start += len(attr)
-	end := strings.Index(line[start:], endChar)
-	if end < 0 {
-		return ""
+}
+
+// Subscribe 订阅进度更新事件，返回一个接收 []byte 的通道。
+func (pm *ProgressManager) Subscribe() chan []byte {
+	ch := make(chan []byte, 16)
+	pm.mu.Lock()
+	pm.subscribers[ch] = struct{}{}
+	pm.mu.Unlock()
+	// 立即发送一次当前状态
+	go func() {
+		data, _ := json.Marshal(pm.GetProgress())
+		ch <- data
+	}()
+	return ch
+}
+
+// Unsubscribe 取消订阅。
+func (pm *ProgressManager) Unsubscribe(ch chan []byte) {
+	pm.mu.Lock()
+	delete(pm.subscribers, ch)
+	pm.mu.Unlock()
+	close(ch)
+}
+
+// broadcast 向所有订阅者推送当前进度。
+func (pm *ProgressManager) broadcast() {
+	data, err := json.Marshal(pm.GetProgress())
+	if err != nil {
+		return
 	}
-	return line[start : start+end]
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for ch := range pm.subscribers {
+		select {
+		case ch <- data:
+		default:
+			// 接收方处理太慢，丢弃本次更新
+		}
+	}
 }
