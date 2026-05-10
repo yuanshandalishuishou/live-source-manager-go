@@ -1,3 +1,5 @@
+// internal/filter/filter.go
+// 黑白名单过滤器 + 质量筛选器，支持热重载
 package filter
 
 import (
@@ -6,9 +8,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/db"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/logger"
-	"github.com/yuanshandalishuishou/live-source-manager-go/internal/models"
+	"live-source-manager-go/internal/config"
+	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/logger"
+	"live-source-manager-go/internal/models"
 )
 
 // Rule 内存中的过滤规则
@@ -21,16 +24,17 @@ type Rule struct {
 
 // Filter 黑白名单过滤器，支持热重载
 type Filter struct {
-	mu        sync.RWMutex
+	mu      sync.RWMutex
 	whitelist []Rule
 	blacklist []Rule
 	version   atomic.Int64 // 数据库规则版本号，用于判断是否需要重载
 	db        *db.DB
+	cfg       *config.Config
 }
 
 // NewFilter 初始化并加载规则
-func NewFilter(database *db.DB) (*Filter, error) {
-	f := &Filter{db: database}
+func NewFilter(database *db.DB, cfg *config.Config) (*Filter, error) {
+	f := &Filter{db: database, cfg: cfg}
 	if err := f.reload(); err != nil {
 		return nil, err
 	}
@@ -102,18 +106,21 @@ func (f *Filter) reload() error {
 
 	dbVer, _ := f.db.GetFilterVersion()
 	f.version.Store(dbVer)
+
 	logger.Info("过滤器规则已重载", "whitelist", len(newWhitelist), "blacklist", len(newBlacklist))
 	return nil
 }
 
-// Apply 对源列表应用黑白名单过滤，返回通过过滤的源
+// Apply 对源列表应用黑白名单过滤 + 质量筛选，返回通过过滤的源
 func (f *Filter) Apply(sources []models.PassedSource) []models.PassedSource {
+	// 第一步：黑白名单过滤
 	f.mu.RLock()
 	wList := f.whitelist
 	bList := f.blacklist
 	f.mu.RUnlock()
 
-	result := make([]models.PassedSource, 0, len(sources))
+	filtered := make([]models.PassedSource, 0, len(sources))
+
 sourceLoop:
 	for _, src := range sources {
 		// 若白名单非空，源必须匹配至少一条白名单规则
@@ -135,9 +142,55 @@ sourceLoop:
 				continue sourceLoop
 			}
 		}
+		filtered = append(filtered, src)
+	}
+
+	// 第二步：质量筛选（如果配置了质量参数）
+	if f.cfg != nil {
+		filtered = f.qualityFilter(filtered)
+	}
+
+	return filtered
+}
+
+// qualityFilter 根据配置的质量门限进一步过滤源
+func (f *Filter) qualityFilter(sources []models.PassedSource) []models.PassedSource {
+	cfg := f.cfg.Filter
+	// 如果没有配置任何质量门限，则跳过
+	if cfg.MaxLatency == 0 && cfg.MinBitrate == 0 && cfg.MinResolution == "" {
+		return sources
+	}
+
+	result := make([]models.PassedSource, 0, len(sources))
+	for _, src := range sources {
+		// 延迟过滤：如果配置了最大延迟且源延迟超过门限则丢弃
+		if cfg.MaxLatency > 0 && src.Latency > float64(cfg.MaxLatency) {
+			logger.Debug("过滤掉 %s (延迟 %.0fms > %dms)", src.Name, src.Latency, cfg.MaxLatency)
+			continue
+		}
+		// 比特率过滤
+		if cfg.MinBitrate > 0 && src.Bitrate < cfg.MinBitrate {
+			logger.Debug("过滤掉 %s (比特率 %d < %d)", src.Name, src.Bitrate, cfg.MinBitrate)
+			continue
+		}
+		// 分辨率过滤（简单字符串比较，格式 "1920x1080"）
+		if cfg.MinResolution != "" {
+			if !resolutionMeets(src.Resolution, cfg.MinResolution) {
+				logger.Debug("过滤掉 %s (分辨率 %s < %s)", src.Name, src.Resolution, cfg.MinResolution)
+				continue
+			}
+		}
 		result = append(result, src)
 	}
 	return result
+}
+
+// resolutionMeets 判断源分辨率是否满足最低要求（简化为像素数比较）
+func resolutionMeets(srcRes, minRes string) bool {
+	var w1, h1, w2, h2 int
+	_, _ = fmt.Sscanf(srcRes, "%dx%d", &w1, &h1)
+	_, _ = fmt.Sscanf(minRes, "%dx%d", &w2, &h2)
+	return w1*h1 >= w2*h2
 }
 
 // match 根据 targetType 判断源是否匹配该规则
