@@ -1,6 +1,6 @@
 // internal/web/jwt.go
 // JWT 令牌生成与验证，用于 Web API 的认证中间件。
-
+// 该文件为 server.go 中引用的 JWTManager 提供具体实现。
 package web
 
 import (
@@ -20,7 +20,7 @@ func NewJWTManager(secret string) *JWTManager {
 	return &JWTManager{secretKey: []byte(secret)}
 }
 
-// Claims 自定义 JWT 载荷。
+// Claims 自定义 JWT 载荷，包含用户基本信息。
 type Claims struct {
 	UserID   int    `json:"user_id"`
 	Username string `json:"username"`
