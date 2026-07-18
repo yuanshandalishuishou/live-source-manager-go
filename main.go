@@ -174,9 +174,10 @@ func ensureAdmin(conn *sql.DB, log *logger.Logger) {
 		pw = os.Getenv("LSM_ADMIN_PASSWORD")
 	}
 	if pw == "" {
-		// 两者皆空：首次部署随机生成强密码（对齐 Python init_db 行为），并打印到 stdout 供部署脚本捕获。
-		pw = generateAdminPassword()
-		log.Warning("未设置 WEB_ADMIN_PASSWORD / LSM_ADMIN_PASSWORD，已自动生成随机管理员密码并打印到控制台")
+		// 两者皆空：使用默认初始密码 Admin@123（李总指定，与历史 Python 部署习惯一致）。
+		// 环境变量可覆盖；首次登录后建议在「配置中心 → 密码管理」修改。
+		pw = "Admin@123"
+		log.Warning("未设置 WEB_ADMIN_PASSWORD / LSM_ADMIN_PASSWORD，使用默认初始密码 Admin@123（建议首次登录后修改）")
 		fmt.Println("ADMIN_PASSWORD_INITIALIZED=" + pw)
 	}
 	// 校验密码强度（兜底：过短则重新生成）。

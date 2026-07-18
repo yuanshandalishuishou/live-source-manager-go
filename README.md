@@ -80,7 +80,7 @@ CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o bin/lsm .
 ./bin/lsm --config-dir .
 ```
 
-首次启动若未设置 `LSM_ADMIN_PASSWORD`，将**自动随机生成**一个强密码并打印到启动日志（形如 `ADMIN_PASSWORD_INITIALIZED=xxxx`），**请记录该密码或部署时即设定 `LSM_ADMIN_PASSWORD`**。这与 Python 版（`WEB_ADMIN_PASSWORD`）行为一致。
+首次启动若未设置 `LSM_ADMIN_PASSWORD`，默认管理员密码为 **`Admin@123`**（与历史 Python 部署习惯一致），并打印到启动日志（形如 `ADMIN_PASSWORD_INITIALIZED=Admin@123`）。**建议首次登录后即在「配置中心 → 密码管理」修改，或部署时直接设定 `LSM_ADMIN_PASSWORD`**。机制上 Go 版（`LSM_ADMIN_PASSWORD`）与 Python 版（`WEB_ADMIN_PASSWORD`）一致：环境变量优先、空则回退默认；仅初始默认值不同（Go=`Admin@123`，Python=随机生成）。
 
 ### 3. 访问
 

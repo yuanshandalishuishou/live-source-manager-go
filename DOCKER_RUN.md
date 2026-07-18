@@ -157,7 +157,7 @@ docker run -d --name lsm-go \
 
 ## 八、首次登录
 
-默认管理员：`admin`，密码在**首次启动且未设置 `LSM_ADMIN_PASSWORD` 时自动随机生成**，并打印到容器/进程启动日志（形如 `ADMIN_PASSWORD_INITIALIZED=xxxx`）。
+默认管理员：`admin`，密码在**首次启动且未设置 `LSM_ADMIN_PASSWORD` 时默认为 `Admin@123`**（与历史 Python 部署习惯一致），并打印到容器/进程启动日志（形如 `ADMIN_PASSWORD_INITIALIZED=Admin@123`）。部署时建议通过 `LSM_ADMIN_PASSWORD` 覆盖，或首次登录后在「配置中心 → 密码管理」修改。
 
 若设置了 `LSM_ADMIN_PASSWORD`，则使用该密码（向后兼容旧变量 `LSM_ADMIN_PASSWORD`；Python 版变量名为 `WEB_ADMIN_PASSWORD`，二者等价）。
 
