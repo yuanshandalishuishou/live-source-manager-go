@@ -440,6 +440,9 @@ func (m *Manager) parseContentInto(content, fileID, fileName, sourcePath, fileTy
 	} else {
 		channels = ParseM3U(content, fileID, fileName)
 	}
+	// Layer file-level + channel-level UA configs on top of the UA the parser
+	// already extracted from each source (Python parity: file_ua + overrides).
+	applyChannelUA(m.cfg, fileID, sourcePath, fileName, channels)
 	sf := types.SourceFile{
 		ID:           fileID,
 		Name:         fileName,
@@ -480,9 +483,15 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			i++ // consume the #EXTINF line
 
 			// Skip #EXTVLCOPT: and other #EXT* directives until the URL line.
+			// Capture per-source UA from #EXTVLCOPT:http-user-agent=... (Python parity).
+			var extvlcUA string
 			for i < len(lines) {
 				peek := strings.TrimSpace(lines[i])
 				if strings.HasPrefix(peek, "#EXTVLCOPT:") {
+					opt := strings.TrimSpace(peek[len("#EXTVLCOPT:"):])
+					if k, v, ok := splitKV(opt); ok && strings.EqualFold(k, "http-user-agent") {
+						extvlcUA = v
+					}
 					i++
 					continue
 				}
@@ -499,7 +508,8 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			if urlLine == "" || strings.HasPrefix(urlLine, "#") {
 				continue
 			}
-			streamURL := stripInline(urlLine)
+			cleanURL, inlineUA := splitCleanURLAndUA(urlLine)
+			streamURL := cleanURL
 			ok, reason, _ := security.IsStaticSafe(streamURL)
 			if !ok {
 				if exclusions != nil {
@@ -509,6 +519,10 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				continue
 			}
 			name := extractM3UName(extinf)
+			// UA priority (Python parity): inline(|User-Agent=) > #EXTVLCOPT:http-user-agent
+			// > EXTINF http-user-agent attribute. File-level / channel-level config is
+			// layered on top later in applyChannelUA.
+			ua := pickFirstNonEmpty(inlineUA, extvlcUA, extractAttr(extinf, "http-user-agent"))
 			ch := types.Channel{
 				ID:          util.ChannelID(name, streamURL),
 				Name:        name,
@@ -518,6 +532,7 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				Group:       extractAttr(extinf, "group-title"),
 				FileID:      fileID,
 				FileName:    fileName,
+				UserAgent:   ua,
 				Categories:  nil,
 				Status:      "",
 			}
@@ -527,7 +542,8 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 
 		// Plain URL line (no #EXTINF).
 		if line != "" && !strings.HasPrefix(line, "#") {
-			streamURL := stripInline(line)
+			cleanURL, inlineUA := splitCleanURLAndUA(line)
+			streamURL := cleanURL
 			ok, reason, _ := security.IsStaticSafe(streamURL)
 			if !ok {
 				if exclusions != nil {
@@ -544,6 +560,7 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				URLOriginal: streamURL,
 				FileID:      fileID,
 				FileName:    fileName,
+				UserAgent:   inlineUA,
 				Group:       "",
 				Categories:  nil,
 				Status:      "",
@@ -557,7 +574,8 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 func parseTXT(content, fileID, fileName string, exclusions map[string]string) []types.Channel {
 	var channels []types.Channel
 	for _, line := range util.SplitLines(content) {
-		streamURL := stripInline(line)
+		cleanURL, inlineUA := splitCleanURLAndUA(line)
+		streamURL := cleanURL
 		ok, reason, _ := security.IsStaticSafe(streamURL)
 		if !ok {
 			if exclusions != nil {
@@ -574,6 +592,7 @@ func parseTXT(content, fileID, fileName string, exclusions map[string]string) []
 			URLOriginal: streamURL,
 			FileID:      fileID,
 			FileName:    fileName,
+			UserAgent:   inlineUA,
 			Group:       "",
 			Categories:  nil,
 			Status:      "",
@@ -585,12 +604,105 @@ func parseTXT(content, fileID, fileName string, exclusions map[string]string) []
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// stripInline removes the "|User-Agent=..." style suffix from a URL line.
-func stripInline(line string) string {
-	if idx := strings.Index(line, "|"); idx >= 0 {
-		return line[:idx]
+// applyChannelUA resolves the final UA for every channel of one source file,
+// matching the Python source_manager priority:
+//
+//	channel override (channel_ua_overrides)  >  embedded (inline/EXTVLCOPT/EXTINF)
+//	                                       >  file-level (source_file_ua_settings / UserAgents section)
+//
+// ch.UserAgent already holds the embedded UA (set by the parser); this only
+// upgrades it when a configured file-level or channel-level UA exists.
+func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, channels []types.Channel) {
+	if cfg == nil || len(channels) == 0 {
+		return
 	}
-	return line
+	// File-level UA from the Web UI setting (Sources.source_file_ua_settings[fileID]).
+	var fileUA, fileUAPos string
+	if settings := cfg.GetSourceFileUASettings(); len(settings) > 0 {
+		if entry, ok := settings[fileID].(map[string]any); ok {
+			if en, _ := entry["enabled"].(bool); en {
+				if v, _ := entry["ua_value"].(string); v != "" {
+					fileUA = v
+				}
+			}
+			if v, _ := entry["ua_position"].(string); v != "" {
+				fileUAPos = v
+			}
+		}
+	}
+	// Legacy fallback: UserAgents config section keyed by source path/name.
+	if fileUA == "" {
+		if uas := cfg.GetUserAgents(); len(uas) > 0 {
+			for _, key := range []string{sourcePath, fileName} {
+				if v, ok := uas[key]; ok && v != "" {
+					fileUA = v
+					break
+				}
+			}
+		}
+	}
+	overrides := cfg.GetChannelUAOverrides()
+	for i := range channels {
+		ch := &channels[i]
+		resolved := fileUA
+		if ch.UserAgent != "" {
+			resolved = ch.UserAgent // embedded UA beats file-level
+		}
+		key := ch.Name
+		if key == "" {
+			key = ch.URL
+		}
+		if ov, ok := overrides[key].(map[string]any); ok {
+			if v, _ := ov["ua_value"].(string); v != "" {
+				resolved = v // channel override wins over everything
+			}
+			if v, _ := ov["ua_position"].(string); v != "" {
+				ch.UAPosition = v
+			}
+		}
+		if ch.UAPosition == "" {
+			ch.UAPosition = fileUAPos
+		}
+		ch.UserAgent = resolved
+	}
+}
+
+// splitCleanURLAndUA splits a raw playlist URL line into the clean stream URL
+// (everything before the first '|') and any inline "User-Agent=..." value
+// carried after the '|' (Python parity: url_parts[1]). The '|' suffix must be
+// stripped before the parse-stage safety gate, but the UA is preserved so it
+// reaches the realtime test and the m3u output.
+func splitCleanURLAndUA(line string) (clean, inlineUA string) {
+	if idx := strings.Index(line, "|"); idx >= 0 {
+		clean = line[:idx]
+		rest := line[idx+1:]
+		for _, part := range strings.Split(rest, "|") {
+			if i := strings.Index(strings.ToLower(part), "user-agent="); i >= 0 {
+				inlineUA = part[i+len("user-agent="):]
+				break
+			}
+		}
+		return clean, inlineUA
+	}
+	return line, ""
+}
+
+// splitKV parses a "key=value" option string (e.g. from #EXTVLCOPT:).
+func splitKV(s string) (k, v string, ok bool) {
+	if i := strings.Index(s, "="); i >= 0 {
+		return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+1:]), true
+	}
+	return "", "", false
+}
+
+// pickFirstNonEmpty returns the first non-empty string (UA precedence helper).
+func pickFirstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func extractM3UName(extinf string) string {

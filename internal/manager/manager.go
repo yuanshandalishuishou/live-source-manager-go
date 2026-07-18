@@ -453,6 +453,8 @@ func normalizeTestCategory(r types.TestResult) string {
 		return "connection_failed"
 	case "dns_error":
 		return "dns_failed"
+	case "auth_blocked":
+		return "auth_blocked"
 	case "blacklisted":
 		return "global_blacklist"
 	case "frozen":
@@ -658,6 +660,8 @@ func (m *Manager) buildM3UOpts() m3u.Options {
 		Filter:             fp,
 		WhitelistForceKeep: toBool(op["whitelist_force_keep"]),
 		SortBy:             m.cfg.Get("Testing", "output_sort_by", "speed"),
+		UAEnabled:          m.cfg.GetUAEnabled(),
+		UAPosition:         m.cfg.GetUAPosition(),
 	}
 }
 

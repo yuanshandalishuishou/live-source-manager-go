@@ -30,6 +30,8 @@ type Options struct {
 	SortBy             string         // "speed" | "latency" | "name"
 	Whitelist          []string       // host substrings that are always kept
 	Blacklist          []string       // host substrings always dropped
+	UAEnabled          bool           // inject ch.UserAgent into output (UserAgents.ua_enabled)
+	UAPosition         string         // "extinf" (attr) | "url" (|User-Agent= suffix)
 }
 
 // nonAlphaNum matches characters that are not safe inside a tvg-id attribute.
@@ -46,8 +48,8 @@ func Generate(channels []types.Channel, opts Options) (string, error) {
 		// Flat output: no #EXTGRP headers, empty group-title.
 		sortChannels(kept, opts.SortBy)
 		for _, c := range kept {
-			lines = append(lines, buildExtinf(c, ""))
-			lines = append(lines, c.URL)
+			lines = append(lines, buildExtinf(c, "", opts))
+			lines = append(lines, channelURL(c, opts))
 		}
 	} else {
 		groups, order := groupChannels(kept, opts.GroupBy)
@@ -56,8 +58,8 @@ func Generate(channels []types.Channel, opts Options) (string, error) {
 			list := groups[g]
 			sortChannels(list, opts.SortBy)
 			for _, c := range list {
-				lines = append(lines, buildExtinf(c, g))
-				lines = append(lines, c.URL)
+				lines = append(lines, buildExtinf(c, g, opts))
+				lines = append(lines, channelURL(c, opts))
 			}
 		}
 	}
@@ -263,7 +265,7 @@ func sortChannels(chs []types.Channel, sortBy string) {
 // EXTINF building (ports build_enhanced_extinf at base level)
 // ────────────────────────────────────────────────────────────
 
-func buildExtinf(c types.Channel, groupTitle string) string {
+func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 	name := c.Name
 	if name == "" {
 		name = "Unknown"
@@ -292,8 +294,23 @@ func buildExtinf(c types.Channel, groupTitle string) string {
 	if c.Status != "" && c.Status != "success" {
 		parts = append(parts, fmt.Sprintf(`status="%s"`, c.Status))
 	}
+	// UA injection at the EXTINF level (Python parity): only when enabled and
+	// the channel actually carries a UA, and only for the extinf position.
+	if opts.UAEnabled && c.UserAgent != "" && (opts.UAPosition == "" || opts.UAPosition == "extinf") {
+		parts = append(parts, fmt.Sprintf(`user-agent="%s"`, c.UserAgent))
+	}
 	parts = append(parts, ","+name)
 	return strings.Join(parts, " ")
+}
+
+// channelURL returns the stream URL, optionally appending the UA as a
+// "|User-Agent=..." suffix when the url position is selected (Python parity).
+func channelURL(c types.Channel, opts Options) string {
+	u := c.URL
+	if opts.UAEnabled && c.UserAgent != "" && opts.UAPosition == "url" {
+		u = u + "|User-Agent=" + c.UserAgent
+	}
+	return u
 }
 
 // ────────────────────────────────────────────────────────────
