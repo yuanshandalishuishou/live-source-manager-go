@@ -629,10 +629,175 @@ func (s *Server) hUpdateSourceFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已更新"})
 }
 
+// hDeleteSourceFile 删除一个源文件条目（online URL / github 仓库 / local 磁盘文件），
+// 并清理其配套的 UA / Referer 源文件级设置与频道级覆盖。
+// 注意：之前该接口只清空了 UA 设置却未移除源本身，导致列表里源删不掉——现已修正。
 func (s *Server) hDeleteSourceFile(w http.ResponseWriter, r *http.Request) {
 	id := routeParam(r, "file_id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "file_id 不能为空"})
+		return
+	}
+
+	removed := s.deleteSourceFileByID(id, r)
+
+	// 配套清理（无论源是否在配置中匹配到，都清掉这些设置，避免脏数据残留）
 	s.delUAConfig(id)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已删除 UA 设置"})
+	s.delRefererConfig(id)
+	s.delChannelOverridesForFileID(id)
+
+	if !removed {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": false, "message": "未在源配置中找到该条目，已清理相关设置"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": true, "message": "源文件已删除"})
+}
+
+// deleteSourceFileByID 从配置中移除匹配 file_id 的源文件条目。
+//   - online: 从 Sources.online_urls 移除对应行（在线源不落盘，无需删文件）
+//   - github: 从 Sources.github_sources 移除对应仓库，并清其下载方式设置
+//   - local:  删除磁盘上对应的 .m3u/.m3u8/.txt 文件
+//
+// 返回是否实际从配置/磁盘移除了源本身。
+func (s *Server) deleteSourceFileByID(id string, r *http.Request) bool {
+	// ── online ──
+	if urls := s.cfg.Get("Sources", "online_urls", ""); strings.TrimSpace(urls) != "" {
+		anyRemoved := false
+		kept := []string{}
+		for _, u := range linesOf(urls) {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+			if util.FileID(u) == id {
+				anyRemoved = true
+				s.audit(r, "source_file_delete", u, "删除在线源")
+				continue
+			}
+			kept = append(kept, u)
+		}
+		if anyRemoved {
+			s.cfg.Set("Sources", "online_urls", strings.Join(kept, "\n"))
+			return true
+		}
+	}
+
+	// ── github ──
+	if repos := s.cfg.Get("Sources", "github_sources", ""); strings.TrimSpace(repos) != "" {
+		anyRemoved := false
+		kept := []string{}
+		for _, repo := range linesOf(repos) {
+			repo = strings.TrimSpace(repo)
+			if repo == "" {
+				continue
+			}
+			base := s.githubBaseRawURL(repo)
+			if base != "" && util.FileID(base) == id {
+				anyRemoved = true
+				s.clearGithubDownloadMethod(repo)
+				s.audit(r, "source_file_delete", repo, "删除 GitHub 源")
+				continue
+			}
+			kept = append(kept, repo)
+		}
+		if anyRemoved {
+			s.cfg.Set("Sources", "github_sources", strings.Join(kept, "\n"))
+			return true
+		}
+	}
+
+	// ── local ── 删除目录下匹配的具体文件
+	dirs := splitComma(s.cfg.Get("Sources", "local_dirs", ""))
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			fn := strings.ToLower(e.Name())
+			if !strings.HasSuffix(fn, ".m3u") && !strings.HasSuffix(fn, ".m3u8") && !strings.HasSuffix(fn, ".txt") {
+				continue
+			}
+			p := filepath.Join(dir, e.Name())
+			if util.FileID(p) == id {
+				if err := os.Remove(p); err == nil {
+					s.audit(r, "source_file_delete", p, "删除本地源文件")
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// clearGithubDownloadMethod 清除仓库的 GitHub 下载方式设置。
+func (s *Server) clearGithubDownloadMethod(repo string) {
+	raw := s.cfg.Get("Sources", "github_source_settings", "{}")
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil || settings == nil {
+		return
+	}
+	if _, ok := settings[repo]; !ok {
+		return
+	}
+	delete(settings, repo)
+	if b, err := json.Marshal(settings); err == nil {
+		s.cfg.Set("Sources", "github_source_settings", string(b))
+	}
+}
+
+// delRefererConfig 删除源文件级 Referer 设置（与 delUAConfig 对称）。
+func (s *Server) delRefererConfig(id string) {
+	settings := s.cfg.GetSourceFileRefererSettings()
+	delete(settings, id)
+	raw, _ := json.Marshal(settings)
+	s.cfg.Set("Sources", "source_file_referer_settings", string(raw))
+}
+
+// delChannelOverridesForFileID 删除该源文件下所有频道的 UA / Referer 频道级覆盖。
+func (s *Server) delChannelOverridesForFileID(id string) {
+	chans, _, ok := s.peekChannels()
+	if !ok {
+		return
+	}
+	urls := map[string]bool{}
+	names := map[string]bool{}
+	for _, ch := range chans {
+		if ch.FileID == id {
+			urls[ch.URL] = true
+			names[ch.Name] = true
+		}
+	}
+	if len(urls) == 0 && len(names) == 0 {
+		return
+	}
+	for _, key := range []string{"channel_ua_overrides", "channel_referer_overrides"} {
+		raw := s.cfg.Get("Sources", key, "{}")
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil || m == nil {
+			continue
+		}
+		changed := false
+		for k := range m {
+			if urls[k] || names[k] {
+				delete(m, k)
+				changed = true
+			}
+		}
+		if changed {
+			if b, err := json.Marshal(m); err == nil {
+				s.cfg.Set("Sources", key, string(b))
+			}
+		}
+	}
 }
 
 func (s *Server) hGetSourceFileChannels(w http.ResponseWriter, r *http.Request) {
