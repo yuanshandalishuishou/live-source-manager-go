@@ -457,6 +457,8 @@ func normalizeTestCategory(r types.TestResult) string {
 		return "global_blacklist"
 	case "frozen":
 		return "frozen"
+	case "bad_source":
+		return "bad_source"
 	case "untested":
 		return "no_probe_tool_available"
 	case "interrupted":

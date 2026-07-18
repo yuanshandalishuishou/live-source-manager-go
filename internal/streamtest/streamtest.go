@@ -172,6 +172,20 @@ func (t *Tester) findBinary(name string) string {
 	for _, d := range dirs {
 		candidates = append(candidates, filepath.Join(d, name+".exe"), filepath.Join(d, name))
 	}
+	// 2.5) derive project root from the executable path — robust against CWD.
+	// Mirrors Python's `Path(__file__).resolve().parent` resource discovery, so
+	// the bundled tools/ffmpeg is always found regardless of the launch directory
+	// (Windows service / systemd / Docker may start with an unrelated CWD).
+	if exe, err := os.Executable(); err == nil {
+		if ec, e2 := filepath.EvalSymlinks(exe); e2 == nil {
+			exe = ec
+		}
+		root := filepath.Dir(filepath.Dir(exe)) // .../bin/lsm.exe -> project root
+		candidates = append(candidates,
+			filepath.Join(root, "tools", "ffmpeg", name+".exe"),
+			filepath.Join(root, "tools", "ffmpeg", name),
+		)
+	}
 	// 3) project-local tools/ffmpeg (cwd + sibling Python project) then bare name
 	candidates = append(candidates,
 		filepath.Join(cwd, "tools", "ffmpeg", name+".exe"),
@@ -488,7 +502,11 @@ func (t *Tester) probeFFprobe(ctx context.Context, u, ua, bin string, p Params) 
 	defer cancel()
 
 	// -timeout expects microseconds; convert the configured seconds.
-	args := []string{"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams",
+	// NOTE: use `-v error` (not `quiet`) so ffprobe still reports the real
+	// failure reason (403 / connection refused / invalid data) on stderr.
+	// With `-v quiet` every failure is silent and classifyError() can only
+	// return the generic "no output" bucket, defeating the 失败原因分布 panel.
+	args := []string{"-v", "error", "-print_format", "json", "-show_format", "-show_streams",
 		"-timeout", strconv.Itoa(p.Timeout * 1_000_000), u}
 	if ua != "" {
 		args = append(args, "-headers", "User-Agent: "+ua)
@@ -694,6 +712,13 @@ func classifyError(msg string) (string, string) {
 	}
 	if strings.Contains(t, "404") || strings.Contains(t, "not found") || strings.Contains(t, "no such") {
 		return "not_found", "资源不存在（404）"
+	}
+	// invalid/corrupt source or an explicit server rejection (not auth-specific).
+	badSrcKw := []string{"invalid data", "server returned", "method not allowed", "operation not permitted"}
+	for _, k := range badSrcKw {
+		if strings.Contains(t, k) {
+			return "bad_source", "源数据无效/服务器拒绝（流可能已失效或触发防盗链）"
+		}
 	}
 	return "failed", "ffprobe 执行失败（未知错误）"
 }

@@ -104,7 +104,7 @@ func (s *Server) hTestTrigger(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"session_id":         sid,
-		"ffprobe_available":  true,
+		"ffprobe_available":  s.mgr.HasTestBinaries(),
 		"total":              len(channels),
 		"total_before_dedup": totalBefore,
 		"dedup_removed":      dedupRemoved,
