@@ -1,0 +1,96 @@
+version: '3.8'
+
+# =============================================================
+# docker-compose.yml — Live Source Manager (Go 版)
+# =============================================================
+# 使用:
+#   1. 构建并启动: docker-compose up -d --build
+#   2. 查看日志:   docker-compose logs -f
+#   3. 停止服务:   docker-compose down
+#
+# 国内网络优化（构建期使用国内 Go 代理）:
+#   export GOPROXY=https://goproxy.cn,direct
+#   docker-compose up -d --build
+# =============================================================
+
+services:
+  live-source-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 国内用户可用此覆盖；GitHub Actions 会自动改回官方源
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+    image: lsm-go:latest
+    container_name: live-source-manager
+    hostname: lsm
+    restart: unless-stopped
+
+    ports:
+      - "${FILESHARE_PORT:-12345}:12345"   # 文件发布端口 (HTTPServer.fileshare_port)
+      - "${MANAGER_PORT:-23456}:23456"     # Web 管理端口 (HTTPServer.manager_port)
+
+    volumes:
+      # 数据库文件（持久化，含配置表/用户/会话/审计）
+      - ${DATA_DIR:-./data}:/app/data:rw
+      # M3U/TXT 播放列表输出（持久化）
+      - ${OUTPUT_DIR:-./output}:/app/www/output:rw
+      # 日志文件（持久化）
+      - ${LOG_DIR:-./logs}:/app/log:rw
+      # 本地直播源文件（只读，运行时扫描）
+      - ${SOURCES_DIR:-./sources}:/app/config/sources:ro
+      # 在线源下载目录（运行时写入）
+      - ${ONLINE_DIR:-./online}:/app/config/online:rw
+      # 可选：覆盖分类词典（取消注释并放入你的 channel_rules.yml）
+      # - ${CONFIG_DIR:-./config}/channel_rules.yml:/app/config/channel_rules.yml:ro
+
+    environment:
+      # 时区
+      - TZ=Asia/Shanghai
+      # 管理员密码（留空则首次启动使用默认 admin123456，请尽快修改）
+      - LSM_ADMIN_PASSWORD=${LSM_ADMIN_PASSWORD:-}
+      # 管理端口（映射到容器内 23456）
+      - MANAGER_PORT=${MANAGER_PORT:-23456}
+      # 文件发布端口（映射到容器内 12345）
+      - FILESHARE_PORT=${FILESHARE_PORT:-12345}
+      # 监听地址（默认全网卡）
+      - HOST=${HOST:-0.0.0.0}
+
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    networks:
+      - lsm-network
+
+networks:
+  lsm-network:
+    driver: bridge
+
+# =============================================================
+# .env 文件示例（在项目根目录创建）
+# =============================================================
+# 复制以下内容保存为 .env 文件：
+#
+# FILESHARE_PORT=12345
+# MANAGER_PORT=23456
+# HOST=0.0.0.0
+# LSM_ADMIN_PASSWORD=your_strong_password_here
+# GOPROXY=https://goproxy.cn,direct
+#
+# # 目录映射（可选，默认使用当前目录下的子目录）
+# DATA_DIR=./data
+# OUTPUT_DIR=./output
+# LOG_DIR=./logs
+# SOURCES_DIR=./sources
+# ONLINE_DIR=./online
+# =============================================================

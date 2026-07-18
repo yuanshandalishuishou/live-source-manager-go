@@ -1,0 +1,15 @@
+{{define "content"}}
+<div class="login-wrap">
+  <div class="card login-card">
+    <div class="brand" style="justify-content:center;padding-bottom:14px;"><span class="logo">◎</span><span>直播源管理器</span></div>
+    <form id="login-form">
+      <label class="muted" style="font-size:13px;">用户名</label>
+      <input id="login-user" class="input" style="width:100%;margin:6px 0 14px;" autocomplete="username">
+      <label class="muted" style="font-size:13px;">密码</label>
+      <input id="login-pass" class="input" type="password" style="width:100%;margin:6px 0 16px;" autocomplete="current-password">
+      <button class="btn primary" style="width:100%;" id="login-submit">登录</button>
+      <span id="login-msg" class="msg"></span>
+    </form>
+  </div>
+</div>
+{{end}}

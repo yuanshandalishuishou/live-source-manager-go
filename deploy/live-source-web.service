@@ -1,0 +1,56 @@
+# =============================================================================
+# Live Source Manager (Go) — systemd 服务单元（开机自启）
+# =============================================================================
+# 本文件为模板。安装时由 setup_linux.sh 将 __PROJECT_DIR__ 替换为实际项目路径后
+# 写入 /etc/systemd/system/live-source-web.service。
+#
+# 手动安装（无需运行完整 setup_linux.sh）：
+#   sudo sed 's|__PROJECT_DIR__|/opt/live-source-manager|g' \
+#        deploy/live-source-web.service > /etc/systemd/system/live-source-web.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now live-source-web.service
+#   sudo systemctl status live-source-web
+#
+# 前提条件：
+#   - 已在 <PROJECT_DIR> 构建出二进制 <PROJECT_DIR>/bin/lsm
+#     （setup_linux.sh 会自动用 `go build` 构建；或本地交叉编译后拷入）
+#   - 运行时可写目录 data、config/online、www/output、log 需归属运行用户 www-data，
+#     否则首启写库 / 下载源 / 生成播放列表会失败
+# =============================================================================
+
+[Unit]
+Description=Live Source Manager (Go) Web Interface
+Documentation=https://github.com/yuanshandalishuishou/live-source-manager-go
+# 等网络真正在线后再启动，避免开机早期 DNS / 外部源不可达触发不必要重启
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=__PROJECT_DIR__
+
+# 如需自定义管理员密码（强烈建议），取消下面注释并填入；
+# 否则首次启动将随机生成强密码并打印到日志（ADMIN_PASSWORD_INITIALIZED=...）
+# Environment=LSM_ADMIN_PASSWORD=change_me
+# 如需自定义监听端口，取消下面注释（默认值见 main.go: 23456 / 12345）
+# Environment=MANAGER_PORT=23456
+# Environment=FILESHARE_PORT=12345
+
+ExecStart=__PROJECT_DIR__/bin/lsm --config-dir __PROJECT_DIR__
+
+# 进程退出（含异常）即重启，保证 7x24 常驻
+Restart=always
+RestartSec=10
+# 禁用启动频率限制：配合 Restart=always 实现崩溃自愈（由 RestartSec 节流，无重启风暴）
+StartLimitIntervalSec=0
+# 以进程组方式清理子进程（含 ffprobe/ffmpeg 派生的解码进程），避免孤儿进程残留
+KillMode=control-group
+# 标准输出 / 错误统一进 systemd journal
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# 多用户模式（含开机）自动启动
+WantedBy=multi-user.target

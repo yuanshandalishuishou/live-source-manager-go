@@ -1,0 +1,42 @@
+# =============================================================
+# .gitignore — Live Source Manager (Go 版)
+# 排除构建产物与运行期生成的数据；保留源码/配置/部署脚本。
+# =============================================================
+
+# 构建产物（跨平台二进制，运行时/CI 重新构建）
+/bin/
+*.exe
+lsm
+lsm-go
+
+# 外部二进制：ffmpeg / ffprobe（约 180MB，绝对不入库）
+# 部署时获取：源码部署放 tools/ffmpeg/ 目录；Docker 构建期自动下载（见 DOCKER_RUN.md 第七章）
+tools/ffmpeg/*.exe
+tools/ffmpeg/*.dll
+
+# 运行期数据（首次启动/容器运行时生成，勿入库）
+/data/
+/log/
+/www/output/
+/config/online/
+/config/sources/
+
+# 本地环境 / 密钥
+.env
+*.log
+*.log.*
+
+# Go 测试产物
+*.test
+*.out
+coverage.out
+
+# 编辑器 / 系统 / 工作区
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.workbuddy/
+
+# 文档预览（非源码）
+*.pdf

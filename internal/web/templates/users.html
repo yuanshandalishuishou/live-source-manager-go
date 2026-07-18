@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="page" id="page-users">
+  <div class="toolbar">
+    <button class="btn primary" id="user-add">+ 新增用户</button>
+  </div>
+  <div id="user-edit-box" class="card hidden">
+    <h3>编辑用户</h3>
+    <div class="row">
+      <input id="user-name" class="input" placeholder="用户名">
+      <select id="user-role" class="input"><option value="viewer">viewer</option><option value="admin">admin</option></select>
+      <input id="user-pass" class="input" type="password" placeholder="密码（留空不改）">
+      <label class="row"><input id="user-active" type="checkbox" checked> 启用</label>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn primary" id="user-save">保存</button>
+      <button class="btn" id="user-cancel">取消</button>
+      <span id="user-msg" class="msg"></span>
+    </div>
+  </div>
+  <div class="card"><table id="users-table"><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>显示名</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-body"></tbody></table></div>
+</div>
+{{end}}

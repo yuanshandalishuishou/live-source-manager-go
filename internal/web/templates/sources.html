@@ -1,0 +1,126 @@
+{{define "content"}}
+<div class="page" id="page-sources">
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <div id="source-stats-info" class="muted" style="font-size:13px;flex:1"></div>
+    {{if .IsAdmin}}
+    <button class="btn primary" id="btn-add-file">+ 添加源文件</button>
+    <button class="btn" id="btn-collect">采集所有源</button>
+    {{end}}
+    <button class="btn" id="btn-refresh">刷新</button>
+  </div>
+
+  <!-- 第一步：源文件列表 -->
+  <div class="card">
+    <h3>源文件列表</h3>
+    <table class="data-table" id="source-files-table">
+      <thead>
+        <tr>
+          <th>名称</th>
+          <th>类型</th>
+          <th>地址 / 路径</th>
+          <th>状态</th>
+          <th>频道数</th>
+          <th>UA</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="source-files-tbody">
+        <tr><td colspan="7" class="muted" style="text-align:center;padding:18px">加载中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 第二步：频道展开区 -->
+  <div class="card" id="channels-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 id="channels-title" style="margin:0">频道列表</h3>
+      <button class="btn" id="btn-close-channels" style="padding:4px 12px">×</button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
+      <div id="channels-info" class="muted" style="font-size:13px"></div>
+      <input type="text" id="channels-search" class="input" style="min-width:220px;max-width:280px;font-size:13px" placeholder="搜索频道名 / URL / 分组…">
+    </div>
+    <div style="overflow-x:auto">
+      <table class="data-table" id="channels-table">
+        <thead>
+          <tr>
+            <th>频道名</th>
+            <th>URL</th>
+            <th>分组</th>
+            <th>分类</th>
+            <th>UA</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="channels-tbody"></tbody>
+      </table>
+    </div>
+    <div class="pagination" id="channels-pagination"></div>
+  </div>
+</div>
+
+<!-- 添加源文件 Modal -->
+<div id="add-file-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="add-file-backdrop"></div>
+  <div class="modal-content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0">添加源文件</h3>
+      <button class="btn" id="btn-add-close" style="padding:4px 12px">×</button>
+    </div>
+    <label class="lbl">源类型</label>
+    <select id="file-type" class="input" style="min-width:100%" onchange="onTypeChange()">
+      <option value="online">在线文件 URL</option>
+      <option value="github">GitHub 仓库源</option>
+      <option value="local">本地文件 / 目录</option>
+    </select>
+    <label class="lbl" id="value-label">文件 URL</label>
+    <input type="text" id="file-value" class="input" style="min-width:100%" placeholder="https://example.com/iptv.m3u">
+    <div class="muted" id="value-help" style="font-size:12px;margin:6px 0"></div>
+    <div id="method-group" style="display:none">
+      <label class="lbl">下载方式（仅 GitHub 源）</label>
+      <select id="download-method" class="input" style="min-width:100%">
+        <option value="raw" selected>raw.githubusercontent.com（默认）</option>
+        <option value="api">GitHub API（有速率限制）</option>
+        <option value="proxy">SOCKS/HTTP 代理</option>
+        <option value="mirror">代理网站（如 ghproxy.com）</option>
+      </select>
+    </div>
+    <div id="add-file-result"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" id="btn-add-cancel">取消</button>
+      <button class="btn primary" id="btn-add-submit">添加</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.popover {
+  position: absolute; z-index: 1000;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 16px; min-width: 320px; max-width: 440px;
+}
+.popover .ptitle { font-weight: 600; font-size: 14px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.dim-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dim-row > label { font-size: 12px; color: var(--text-dim); min-width: 54px; text-align: right; }
+.dim-row select, .dim-row textarea {
+  flex: 1; background: var(--bg-soft); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 8px; font-size: 13px; font-family: inherit;
+}
+.pop-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+.cat-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; cursor: pointer; }
+.cat-badge.auto { background: rgba(91,140,255,.15); color: var(--primary); }
+.cat-badge.manual { background: rgba(255,180,84,.18); color: var(--warn); border: 1px dashed var(--warn); }
+.lbl { display: block; font-size: 13px; color: var(--text-dim); margin: 10px 0 4px; }
+.pagination { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.pagination button { background: var(--bg-soft); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.pagination button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.pagination button:disabled { opacity: .4; cursor: not-allowed; }
+.url-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 900; }
+.modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+.modal-content { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; min-width: 460px; max-width: 92vw; box-shadow: var(--shadow); }
+table.data-table th:nth-child(4), table.data-table td:nth-child(4),
+table.data-table th:nth-child(5), table.data-table td:nth-child(5) { text-align: center; }
+</style>
+{{end}}

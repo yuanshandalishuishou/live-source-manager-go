@@ -1,0 +1,53 @@
+{{define "content"}}
+<div class="page" id="page-logs">
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="app-logs" role="tab" aria-selected="true">📋 应用日志</button>
+    {{if .IsAdmin}}<button class="tab-btn" data-tab="audit-logs" role="tab" aria-selected="false">🔍 审计日志</button>{{end}}
+  </div>
+
+  <!-- 应用日志 -->
+  <div id="tab-app-logs" class="tab-content active">
+    <div class="toolbar">
+      <select id="log-level" class="input" style="min-width:120px">
+        <option value="ALL">ALL</option>
+        <option value="DEBUG">DEBUG</option>
+        <option value="INFO" selected>INFO</option>
+        <option value="WARNING">WARNING</option>
+        <option value="ERROR">ERROR</option>
+      </select>
+      <input id="log-tail" class="input" type="number" value="500" min="10" max="5000" style="width:90px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="log-autorefresh" checked> 自动刷新</label>
+      <button class="btn" id="logs-refresh">刷新</button>
+      <a class="btn" href="/api/logs/download">下载</a>
+      <span id="log-count" class="muted" style="margin-left:auto"></span>
+    </div>
+    <div class="card"><pre id="logs-box" class="code">加载中…</pre></div>
+  </div>
+
+  <!-- 审计日志（仅管理员） -->
+  <div id="tab-audit-logs" class="tab-content">
+    <div class="toolbar">
+      <select id="audit-action" class="input" style="min-width:170px"><option value="">全部动作</option></select>
+      <input id="audit-user" class="input" placeholder="用户名筛选" style="min-width:160px">
+      <button class="btn" id="audit-refresh">查询</button>
+      <span id="audit-total" class="muted" style="margin-left:auto"></span>
+    </div>
+    <div class="card">
+      <table id="audit-table"><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>目标</th><th>详情</th><th>IP</th></tr></thead><tbody id="audit-body"></tbody></table>
+      <div id="audit-pagination" class="pagination"></div>
+    </div>
+  </div>
+</div>
+<style>
+.tabs { display:flex; gap:8px; margin-bottom:16px; }
+.tab-btn { background:var(--bg-soft); border:1px solid var(--border); color:var(--text-dim); padding:9px 18px; border-radius:10px; cursor:pointer; font-size:14px; transition:.15s; }
+.tab-btn:hover { color:var(--text); }
+.tab-btn.active { background:var(--primary-soft); color:var(--primary); font-weight:600; border-color:var(--primary); }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+.pagination { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
+.pagination button { background:var(--bg-soft); border:1px solid var(--border); color:var(--text); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+.pagination button.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.pagination button:disabled { opacity:.4; cursor:not-allowed; }
+</style>
+{{end}}

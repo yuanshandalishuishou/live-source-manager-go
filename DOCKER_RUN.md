@@ -1,0 +1,164 @@
+# Docker 部署指南（Live Source Manager · Go 版）
+
+本镜像为**单二进制自包含**：一个 `lsm` 进程同时提供管理界面（23456）与文件发布（12345），无需 Nginx / venv / uvicorn。
+
+---
+
+## 一、镜像构建
+
+### 本地构建
+
+```bash
+# 默认使用国内 Go 代理（goproxy.cn）
+docker build -t lsm-go:latest .
+
+# 指定代理
+docker build --build-arg GOPROXY=https://goproxy.cn,direct -t lsm-go:latest .
+```
+
+### GitHub Actions 自动构建（GHCR）
+
+推送到 `master` 分支（且涉及 Docker 相关文件）或手动 `workflow_dispatch` 会触发
+`.github/workflows/docker.yml`，自动构建并推送至 GHCR：
+
+```
+ghcr.io/<owner>/live-source-manager-go:latest
+ghcr.io/<owner>/live-source-manager-go:master
+ghcr.io/<owner>/live-source-manager-go:sha-<commit>
+```
+
+推送成功后自动将包设为 **public**（他人无需登录即可 `docker pull`）。
+GitHub Runner 在境外，工作流会自动将构建期 Go 代理改回官方源
+（`GOPROXY=https://proxy.golang.org,direct`）。
+
+```bash
+# 拉取（public）
+docker pull ghcr.io/<owner>/live-source-manager-go:latest
+```
+
+---
+
+## 二、目录与卷映射
+
+容器内固定布局（`--config-dir /app`）：
+
+| 容器内路径 | 用途 | 建议挂载 |
+|------------|------|----------|
+| `/app/data` | SQLite 数据库（配置/用户/会话/审计） | 必挂（持久化） |
+| `/app/www/output` | M3U/TXT 播放列表输出 | 必挂 |
+| `/app/log` | 日志 | 建议挂 |
+| `/app/config/sources` | 本地直播源文件（只读扫描） | 可选 ro |
+| `/app/config/online` | 在线源下载目录（运行时写） | 可选 rw |
+| `/app/config/channel_rules.yml` | 分类词典（镜像内已内嵌一份） | 可选覆盖 |
+
+> 注意：镜像在 `/app/config/channel_rules.yml` 已内嵌一份词典。若挂载整个 `/app/config`
+> 覆盖目录，请自行提供 `channel_rules.yml`，否则首启仅告警、不影响启动。
+
+---
+
+## 三、docker-compose 快速启动
+
+```bash
+# 1) 准备目录（首次）
+mkdir -p data output logs sources online
+
+# 2) 启动（可选：先建 .env 设置 LSM_ADMIN_PASSWORD 等）
+docker-compose up -d --build
+
+# 3) 查看日志
+docker-compose logs -f
+
+# 4) 停止
+docker-compose down
+```
+
+`.env` 示例：
+
+```dotenv
+FILESHARE_PORT=12345
+MANAGER_PORT=23456
+HOST=0.0.0.0
+LSM_ADMIN_PASSWORD=your_strong_password_here
+GOPROXY=https://goproxy.cn,direct
+
+DATA_DIR=./data
+OUTPUT_DIR=./output
+LOG_DIR=./logs
+SOURCES_DIR=./sources
+ONLINE_DIR=./online
+```
+
+访问：
+
+- 管理界面：<http://localhost:23456/>
+- 文件发布：<http://localhost:12345/>
+
+---
+
+## 四、纯 docker run
+
+```bash
+docker run -d --name lsm-go \
+  -p 12345:12345 -p 23456:23456 \
+  -e LSM_ADMIN_PASSWORD=your_password \
+  -e TZ=Asia/Shanghai \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/output:/app/www/output" \
+  -v "$PWD/log:/app/log" \
+  -v "$PWD/sources:/app/config/sources:ro" \
+  --restart unless-stopped \
+  lsm-go:latest
+```
+
+---
+
+## 五、健康检查与运维
+
+| 操作 | 命令 |
+|------|------|
+| 容器健康检查 | 内置 `HEALTHCHECK` 探测 `http://localhost:23456/api/health` |
+| 手动健康探测 | `docker exec lsm-go /healthcheck.sh` |
+| 查看日志 | `docker logs -f lsm-go` |
+| 进入容器 | `docker exec -it lsm-go sh` |
+| 重启 | `docker restart lsm-go` |
+
+`docker ps` 中 STATUS 显示 `healthy` 即服务正常。
+
+---
+
+## 六、端口说明
+
+| 端口 | 服务 | 对应配置 |
+|------|------|----------|
+| 23456 | 管理 Web 界面（登录/仪表盘/配置/…） | `HTTPServer.manager_port` |
+| 12345 | 文件发布（M3U/TXT 静态下载） | `HTTPServer.fileshare_port` |
+
+可通过环境变量 `MANAGER_PORT` / `FILESHARE_PORT`（compose）或 `--manager-port` / `--fileshare-port`（二进制）覆盖。
+
+---
+
+## 七、ffmpeg / ffprobe（可选）
+
+镜像构建期会尽力下载静态 ffmpeg/ffprobe 到 `/usr/local/bin`。若下载失败仅告警跳过，
+**流媒体探测功能受限，但 Web / SQLite / 文件发布服务可正常启动**（与 Python 版一致）。
+
+宿主机已装 ffmpeg 时，也可在 `docker run` 时挂载复用：
+
+```bash
+docker run -d --name lsm-go \
+  -p 12345:12345 -p 23456:23456 \
+  -v "$PWD/data:/app/data" -v "$PWD/output:/app/www/output" \
+  -v /usr/local/bin/ffprobe:/usr/local/bin/ffprobe:ro \
+  -v /usr/local/bin/ffmpeg:/usr/local/bin/ffmpeg:ro \
+  lsm-go:latest
+```
+
+---
+
+## 八、首次登录
+
+默认管理员：`admin`，密码在**首次启动且未设置 `LSM_ADMIN_PASSWORD` 时自动随机生成**，并打印到容器/进程启动日志（形如 `ADMIN_PASSWORD_INITIALIZED=xxxx`）。
+
+若设置了 `LSM_ADMIN_PASSWORD`，则使用该密码（向后兼容旧变量 `LSM_ADMIN_PASSWORD`；Python 版变量名为 `WEB_ADMIN_PASSWORD`，二者等价）。
+
+**强烈建议**通过环境变量 `LSM_ADMIN_PASSWORD` 指定强密码（部署时即设定，避免随机密码丢失），或在 Web「用户管理」中修改。

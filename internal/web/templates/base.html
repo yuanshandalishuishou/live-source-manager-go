@@ -1,0 +1,45 @@
+{{define "base"}}<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · IPTV 直播源管理器</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script>window.__csrf_token = "{{.CSRFToken}}";</script>
+</head>
+<body>
+{{if .ShowNav}}
+<aside class="sidebar">
+  <div class="brand"><span class="logo">◎</span><span>直播源管理器</span></div>
+  <nav class="nav">
+    <a href="/" data-nav="dashboard">仪表盘</a>
+    <a href="/sources" data-nav="sources">源管理</a>
+    <a href="/rules" data-nav="rules">分类规则</a>
+    <a href="/config" data-nav="config">配置中心</a>
+    <a href="/system" data-nav="system">系统信息</a>
+    <a href="/test" data-nav="test">实时测试</a>
+    <a href="/logs" data-nav="logs">日志与审计</a>
+    {{if .IsAdmin}}<a href="/users" data-nav="users">用户管理</a>{{end}}
+  </nav>
+  <div class="sidebar-foot">
+    <div class="userbox">
+      <span class="uname">{{if .User}}{{.User.username}}{{end}}</span>
+      <button id="theme-toggle" class="btn-ghost" title="切换主题">◐</button>
+      <button id="logout-btn" class="btn-ghost" title="退出登录">⏻</button>
+    </div>
+  </div>
+</aside>
+{{end}}
+<main class="content">
+{{if .ShowNav}}
+<header class="topbar">
+  <div class="crumbs"><h1>{{.Title}}</h1></div>
+  <div class="spacer"></div>
+</header>
+{{end}}
+{{block "content" .}}{{end}}
+</main>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
+{{end}}

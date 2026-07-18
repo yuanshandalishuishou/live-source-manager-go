@@ -1,0 +1,43 @@
+# =============================================================
+# .gitattributes — 强制文本行尾规范，保证三平台部署可用
+# 目的：Windows 上 autocrlf 可能把 .sh 转成 CRLF，导致 Linux/Docker
+#       构建或执行脚本时 shebang(#!/bin/bash^M) 报错。强制 *.sh 等
+#       始终以 LF 入库与 checkout，Docker COPY 也得到 LF。
+# =============================================================
+
+# 默认：文本文件自动识别，统一以 LF 入库
+* text=auto eol=lf
+
+# 脚本：Linux / Docker 必须 LF（最关键）
+*.sh            text eol=lf
+start_docker.sh text eol=lf
+healthcheck.sh  text eol=lf
+deploy/setup_linux.sh text eol=lf
+
+# Windows 批处理 / PowerShell：保持本机 CRLF
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# 源码与文档：统一 LF
+*.go   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.js   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sql  text eol=lf
+*.md   text eol=lf
+Dockerfile text eol=lf
+
+# 二进制（明确标记，杜绝被当文本规范化）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.zip  binary
+*.gz   binary
+*.woff binary
+*.woff2 binary

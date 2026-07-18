@@ -1,0 +1,10 @@
+{{define "content"}}
+<div class="page" id="page-audit">
+  <div class="toolbar">
+    <select id="audit-action" class="input"><option value="">全部动作</option></select>
+    <input id="audit-user" class="input" placeholder="用户名筛选">
+    <button class="btn" id="audit-refresh">查询</button>
+  </div>
+  <div class="card"><table id="audit-table"><thead><tr><th>时间</th><th>用户</th><th>动作</th><th>目标</th><th>详情</th><th>IP</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+</div>
+{{end}}

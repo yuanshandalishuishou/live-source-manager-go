@@ -1,0 +1,36 @@
+{{define "content"}}
+<div class="page" id="page-rules">
+  <div class="toolbar">
+    <button class="btn primary" id="rule-add">+ 新增规则</button>
+    <button class="btn" id="rule-reimport">重新导入默认规则</button>
+    <button class="btn" id="rule-reset">重置默认分类</button>
+  </div>
+  <div class="card">
+    <h3>分类规则</h3>
+    <table id="rules-table"><thead><tr><th>类型</th><th>名称</th><th>关键词</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead><tbody id="rules-body"></tbody></table>
+  </div>
+  <div class="card">
+    <h3>分类维度</h3>
+    <div id="dim-list" class="row"></div>
+  </div>
+  <div class="card">
+    <h3>省份排除</h3>
+    <table id="excl-table"><thead><tr><th>省份关键词</th><th>排除关键词</th><th>备注</th><th>操作</th></tr></thead><tbody id="excl-body"></tbody></table>
+    <button class="btn" id="excl-add" style="margin-top:10px;">+ 新增排除</button>
+  </div>
+  <div id="rule-edit-box" class="card hidden">
+    <h3>编辑规则</h3>
+    <div class="row">
+      <select id="rule-type" class="input"></select>
+      <input id="rule-name" class="input" placeholder="规则名称">
+      <input id="rule-keywords" class="input" placeholder="关键词，逗号分隔">
+      <input id="rule-priority" class="input" style="min-width:90px;" placeholder="优先级" type="number">
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn primary" id="rule-save">保存</button>
+      <button class="btn" id="rule-cancel">取消</button>
+      <span id="rule-msg" class="msg"></span>
+    </div>
+  </div>
+</div>
+{{end}}

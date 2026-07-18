@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="page" id="page-dashboard">
+  <div id="collect-status" class="card" style="display:none;margin-bottom:16px;background:rgba(74,170,255,.12);border:1px solid rgba(74,170,255,.4);"></div>
+  <div class="stat-grid" id="stat-grid">
+    <div class="card stat"><div class="stat-num" id="st-total">–</div><div class="stat-label">频道总数</div></div>
+    <div class="card stat"><div class="stat-num ok" id="st-valid">–</div><div class="stat-label">有效频道</div></div>
+    <div class="card stat"><div class="stat-num bad" id="st-invalid">–</div><div class="stat-label">排除项</div></div>
+    <div class="card stat"><div class="stat-num" id="st-rate">–</div><div class="stat-label">有效率</div></div>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <h3>频道分组统计</h3>
+      <div id="group-list" class="list"></div>
+    </div>
+    <div class="card">
+      <h3>系统状态</h3>
+      <div id="sys-info" class="kv"></div>
+      <button class="btn" id="goto-test">前往实时测试 →</button>
+    </div>
+  </div>
+</div>
+{{end}}

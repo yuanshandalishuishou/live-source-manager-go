@@ -1,0 +1,58 @@
+{{define "content"}}
+<div class="page" id="page-test">
+  <!-- 统计卡：总数 / 已完成 / 通过 / 失败 -->
+  <div class="test-stats">
+    <div class="card stat"><div class="stat-num" id="stat-total">0</div><div class="stat-label">总数</div></div>
+    <div class="card stat"><div class="stat-num" id="stat-completed">0</div><div class="stat-label">已完成</div></div>
+    <div class="card stat ok"><div class="stat-num" id="stat-passed">0</div><div class="stat-label">通过</div></div>
+    <div class="card stat err"><div class="stat-num" id="stat-failed">0</div><div class="stat-label">失败</div></div>
+  </div>
+
+  <div class="card">
+    <h3>实时测试</h3>
+    <div class="row">
+      <label class="muted">并发</label><input id="test-concurrent" class="input" style="min-width:90px;" type="number" value="40">
+      <label class="muted">超时(秒)</label><input id="test-timeout" class="input" style="min-width:90px;" type="number" value="10">
+      <label class="muted">测速</label><input id="test-speed" type="checkbox" checked>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <label class="muted">测试范围</label>
+      <select id="test-scope" class="input" style="min-width:170px" onchange="onTestScopeChange()">
+        <option value="all">全部频道测试</option>
+        <option value="online">按在线源文件测试</option>
+      </select>
+      <select id="test-file-select" class="input" style="min-width:260px;display:none">
+        <option value="">— 请选择在线源文件 —</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn primary" id="test-start">开始测试</button>
+      <button class="btn" id="test-pause">暂停</button>
+      <button class="btn" id="test-resume">继续</button>
+      <button class="btn danger" id="test-cancel">取消</button>
+      <span id="test-msg" class="msg"></span>
+    </div>
+    <div class="progress"><i id="test-bar"></i></div>
+    <div id="test-status" class="muted">空闲</div>
+  </div>
+
+  <div class="card">
+    <h3>测试结果 <span id="result-count" class="muted" style="font-weight:400">(0)</span></h3>
+    <div id="error-breakdown" class="error-breakdown"></div>
+    <div class="test-table-wrap">
+      <table id="test-table" class="test-table">
+        <thead><tr>
+          <th style="width:14%">频道</th>
+          <th style="width:8%">状态</th>
+          <th style="width:24%">真实地址</th>
+          <th style="width:20%">所在源</th>
+          <th style="width:14%">错误类别</th>
+          <th style="width:20%">详情</th>
+        </tr></thead>
+        <tbody id="test-body"></tbody>
+      </table>
+    </div>
+    <div id="test-empty" class="empty-state">暂无测试数据</div>
+  </div>
+</div>
+{{end}}
