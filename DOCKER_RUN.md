@@ -4,6 +4,18 @@
 
 ---
 
+## 变更记录
+
+> 仅记录影响部署 / 行为的关键变更，完整提交见 `git log`。
+
+- **2026-07-18** — 默认管理员初始密码改为 `Admin@123`（commit `2f93ff0`）。
+  `ensureAdmin` 在未设置 `WEB_ADMIN_PASSWORD` / `LSM_ADMIN_PASSWORD` 时，**不再随机生成**，改用固定默认 `Admin@123`（与历史 Python 部署习惯一致）；环境变量仍可覆盖，启动时仍打印 `ADMIN_PASSWORD_INITIALIZED=Admin@123`。
+  **仅影响全新部署**（库内无用户时）。已存在用户不受影响，本地库已手动重置为 `Admin@123`。
+- **2026-07-18** — 修复实时测试「有效频道恒为 0」（commit `f7ee063`）。
+  `findBinary` 改用 `os.Executable()` 推导 ffmpeg/ffprobe 资源路径（不再依赖启动目录，避免服务态探测被拦截）；`probeFFprobe` 由 `-v quiet` 改 `-v error` 并新增 `bad_source` 错误分类；触发响应 `ffprobe_available` 改为真实探测值。实测有效频道 >0，失败原因分布正确归类。
+
+---
+
 ## 一、镜像构建
 
 ### 本地构建
