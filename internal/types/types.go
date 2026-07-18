@@ -13,6 +13,8 @@ type Channel struct {
 	FileName      string            `json:"file_name"`
 	UserAgent     string            `json:"user_agent"`
 	UAPosition    string            `json:"ua_position"`
+	Referrer      string            `json:"referrer"`
+	ReferrerPosition string         `json:"referrer_position"`
 	Categories    map[string]string `json:"categories"`
 	Status        string            `json:"status"`         // success | failed | timeout | connection_failed | ...
 	ResponseTime  float64           `json:"response_time"`  // seconds

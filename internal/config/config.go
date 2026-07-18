@@ -54,6 +54,8 @@ func DefaultValues() map[string]string {
 		"Sources.github_source_settings":  "{}",
 		"Sources.source_file_ua_settings": "{}",
 		"Sources.channel_ua_overrides":    "{}",
+		"Sources.source_file_referer_settings": "{}",
+		"Sources.channel_referer_overrides":    "{}",
 		// [Network]
 		"Network.proxy_enabled":  "False",
 		"Network.proxy_type":     "socks5",
@@ -329,6 +331,33 @@ func (c *Config) GetChannelUAOverrides() map[string]any {
 // GetUAEnabled / GetUAPosition expose UA toggles.
 func (c *Config) GetUAEnabled() bool    { return c.GetBool("UserAgents", "ua_enabled", false) }
 func (c *Config) GetUAPosition() string { return c.Get("UserAgents", "ua_position", "extinf") }
+
+// GetSourceFileRefererSettings / GetChannelRefererOverrides mirror the UA
+// settings but for the Referer header. Python lacks these entirely (it parses
+// http_referrer but never consumes it); Go wires them end-to-end so refs that
+// carry a Referer actually reach ffprobe and the generated playlist.
+func (c *Config) GetSourceFileRefererSettings() map[string]any {
+	raw := c.Get("Sources", "source_file_referer_settings", "{}")
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil || m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+func (c *Config) GetChannelRefererOverrides() map[string]any {
+	raw := c.Get("Sources", "channel_referer_overrides", "{}")
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil || m == nil {
+		return map[string]any{}
+	}
+	return m
+}
+
+// GetReferrerEnabled / GetReferrerPosition gate referer injection into the
+// generated M3U output (extinf attribute vs |Referer= url suffix).
+func (c *Config) GetReferrerEnabled() bool    { return c.GetBool("Referrers", "referer_enabled", false) }
+func (c *Config) GetReferrerPosition() string { return c.Get("Referrers", "referer_position", "extinf") }
 
 func splitLines(s string) []string {
 	if strings.TrimSpace(s) == "" {

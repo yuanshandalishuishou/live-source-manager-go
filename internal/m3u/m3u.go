@@ -32,6 +32,8 @@ type Options struct {
 	Blacklist          []string       // host substrings always dropped
 	UAEnabled          bool           // inject ch.UserAgent into output (UserAgents.ua_enabled)
 	UAPosition         string         // "extinf" (attr) | "url" (|User-Agent= suffix)
+	RefererEnabled     bool           // inject ch.Referrer into output (Referrers.referer_enabled)
+	RefererPosition    string         // "extinf" (attr) | "url" (|Referer= suffix)
 }
 
 // nonAlphaNum matches characters that are not safe inside a tvg-id attribute.
@@ -299,16 +301,25 @@ func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 	if opts.UAEnabled && c.UserAgent != "" && (opts.UAPosition == "" || opts.UAPosition == "extinf") {
 		parts = append(parts, fmt.Sprintf(`user-agent="%s"`, c.UserAgent))
 	}
+	// Referer injection at the EXTINF level (Python lacks this; Go wires it so
+	// generated playlists carry the Referer these sources require).
+	if opts.RefererEnabled && c.Referrer != "" && (opts.RefererPosition == "" || opts.RefererPosition == "extinf") {
+		parts = append(parts, fmt.Sprintf(`http-referer="%s"`, c.Referrer))
+	}
 	parts = append(parts, ","+name)
 	return strings.Join(parts, " ")
 }
 
-// channelURL returns the stream URL, optionally appending the UA as a
-// "|User-Agent=..." suffix when the url position is selected (Python parity).
+// channelURL returns the stream URL, optionally appending the UA / Referer as a
+// "|User-Agent=..." / "|Referer=..." suffix when the url position is selected
+// (Python parity).
 func channelURL(c types.Channel, opts Options) string {
 	u := c.URL
 	if opts.UAEnabled && c.UserAgent != "" && opts.UAPosition == "url" {
 		u = u + "|User-Agent=" + c.UserAgent
+	}
+	if opts.RefererEnabled && c.Referrer != "" && opts.RefererPosition == "url" {
+		u = u + "|Referer=" + c.Referrer
 	}
 	return u
 }

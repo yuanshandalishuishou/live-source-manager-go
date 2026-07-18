@@ -662,6 +662,8 @@ func (m *Manager) buildM3UOpts() m3u.Options {
 		SortBy:             m.cfg.Get("Testing", "output_sort_by", "speed"),
 		UAEnabled:          m.cfg.GetUAEnabled(),
 		UAPosition:         m.cfg.GetUAPosition(),
+		RefererEnabled:     m.cfg.GetReferrerEnabled(),
+		RefererPosition:    m.cfg.GetReferrerPosition(),
 	}
 }
 

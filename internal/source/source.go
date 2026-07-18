@@ -482,19 +482,25 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			extinf := line
 			i++ // consume the #EXTINF line
 
-			// Skip #EXTVLCOPT: and other #EXT* directives until the URL line.
-			// Capture per-source UA from #EXTVLCOPT:http-user-agent=... (Python parity).
-			var extvlcUA string
-			for i < len(lines) {
-				peek := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(peek, "#EXTVLCOPT:") {
-					opt := strings.TrimSpace(peek[len("#EXTVLCOPT:"):])
-					if k, v, ok := splitKV(opt); ok && strings.EqualFold(k, "http-user-agent") {
+		// Skip #EXTVLCOPT: and other #EXT* directives until the URL line.
+		// Capture per-source UA / Referer from #EXTVLCOPT:http-user-agent= /
+		// #EXTVLCOPT:http-referrer= (Python parity).
+		var extvlcUA, extvlcReferer string
+		for i < len(lines) {
+			peek := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(peek, "#EXTVLCOPT:") {
+				opt := strings.TrimSpace(peek[len("#EXTVLCOPT:"):])
+				if k, v, ok := splitKV(opt); ok {
+					switch {
+					case strings.EqualFold(k, "http-user-agent"):
 						extvlcUA = v
+					case strings.EqualFold(k, "http-referrer"), strings.EqualFold(k, "http-referer"):
+						extvlcReferer = v
 					}
-					i++
-					continue
 				}
+				i++
+				continue
+			}
 				if strings.HasPrefix(peek, "#") && !strings.HasPrefix(peek, "#EXTINF:") {
 					i++
 					continue
@@ -508,8 +514,8 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			if urlLine == "" || strings.HasPrefix(urlLine, "#") {
 				continue
 			}
-			cleanURL, inlineUA := splitCleanURLAndUA(urlLine)
-			streamURL := cleanURL
+		cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(urlLine)
+		streamURL := cleanURL
 			ok, reason, _ := security.IsStaticSafe(streamURL)
 			if !ok {
 				if exclusions != nil {
@@ -522,27 +528,31 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			// UA priority (Python parity): inline(|User-Agent=) > #EXTVLCOPT:http-user-agent
 			// > EXTINF http-user-agent attribute. File-level / channel-level config is
 			// layered on top later in applyChannelUA.
-			ua := pickFirstNonEmpty(inlineUA, extvlcUA, extractAttr(extinf, "http-user-agent"))
-			ch := types.Channel{
-				ID:          util.ChannelID(name, streamURL),
-				Name:        name,
-				URL:         streamURL,
-				URLOriginal: streamURL,
-				Logo:        extractAttr(extinf, "tvg-logo"),
-				Group:       extractAttr(extinf, "group-title"),
-				FileID:      fileID,
-				FileName:    fileName,
-				UserAgent:   ua,
-				Categories:  nil,
-				Status:      "",
-			}
+		ua := pickFirstNonEmpty(inlineUA, extvlcUA, extractAttr(extinf, "http-user-agent"))
+		// Referer priority (Python parity, but actually consumed here):
+		// inline(|Referer=) > #EXTVLCOPT:http-referrer > EXTINF http-referrer attr.
+		referer := pickFirstNonEmpty(inlineReferer, extvlcReferer, extractAttr(extinf, "http-referrer"), extractAttr(extinf, "http-referer"))
+		ch := types.Channel{
+			ID:          util.ChannelID(name, streamURL),
+			Name:        name,
+			URL:         streamURL,
+			URLOriginal: streamURL,
+			Logo:        extractAttr(extinf, "tvg-logo"),
+			Group:       extractAttr(extinf, "group-title"),
+			FileID:      fileID,
+			FileName:    fileName,
+			UserAgent:   ua,
+			Referrer:    referer,
+			Categories:  nil,
+			Status:      "",
+		}
 			channels = append(channels, ch)
 			continue
 		}
 
 		// Plain URL line (no #EXTINF).
 		if line != "" && !strings.HasPrefix(line, "#") {
-			cleanURL, inlineUA := splitCleanURLAndUA(line)
+			cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(line)
 			streamURL := cleanURL
 			ok, reason, _ := security.IsStaticSafe(streamURL)
 			if !ok {
@@ -561,6 +571,7 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				FileID:      fileID,
 				FileName:    fileName,
 				UserAgent:   inlineUA,
+				Referrer:    inlineReferer,
 				Group:       "",
 				Categories:  nil,
 				Status:      "",
@@ -574,7 +585,7 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 func parseTXT(content, fileID, fileName string, exclusions map[string]string) []types.Channel {
 	var channels []types.Channel
 	for _, line := range util.SplitLines(content) {
-		cleanURL, inlineUA := splitCleanURLAndUA(line)
+		cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(line)
 		streamURL := cleanURL
 		ok, reason, _ := security.IsStaticSafe(streamURL)
 		if !ok {
@@ -593,6 +604,7 @@ func parseTXT(content, fileID, fileName string, exclusions map[string]string) []
 			FileID:      fileID,
 			FileName:    fileName,
 			UserAgent:   inlineUA,
+			Referrer:    inlineReferer,
 			Group:       "",
 			Categories:  nil,
 			Status:      "",
@@ -612,6 +624,14 @@ func parseTXT(content, fileID, fileName string, exclusions map[string]string) []
 //
 // ch.UserAgent already holds the embedded UA (set by the parser); this only
 // upgrades it when a configured file-level or channel-level UA exists.
+// applyChannelUA resolves the final UA and Referer for every channel of one
+// source file, matching the Python source_manager priority:
+//
+//	channel override  >  embedded (inline/EXTVLCOPT/EXTINF)  >  file-level config
+//
+// ch.UserAgent / ch.Referrer already hold the embedded values (set by the
+// parser); this only upgrades them when a configured file-level or
+// channel-level value exists.
 func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, channels []types.Channel) {
 	if cfg == nil || len(channels) == 0 {
 		return
@@ -630,6 +650,20 @@ func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, cha
 			}
 		}
 	}
+	// File-level Referer (Sources.source_file_referer_settings[fileID]).
+	var fileRef, fileRefPos string
+	if settings := cfg.GetSourceFileRefererSettings(); len(settings) > 0 {
+		if entry, ok := settings[fileID].(map[string]any); ok {
+			if en, _ := entry["enabled"].(bool); en {
+				if v, _ := entry["referer_value"].(string); v != "" {
+					fileRef = v
+				}
+			}
+			if v, _ := entry["referer_position"].(string); v != "" {
+				fileRefPos = v
+			}
+		}
+	}
 	// Legacy fallback: UserAgents config section keyed by source path/name.
 	if fileUA == "" {
 		if uas := cfg.GetUserAgents(); len(uas) > 0 {
@@ -641,7 +675,8 @@ func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, cha
 			}
 		}
 	}
-	overrides := cfg.GetChannelUAOverrides()
+	uaOverrides := cfg.GetChannelUAOverrides()
+	refOverrides := cfg.GetChannelRefererOverrides()
 	for i := range channels {
 		ch := &channels[i]
 		resolved := fileUA
@@ -652,7 +687,7 @@ func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, cha
 		if key == "" {
 			key = ch.URL
 		}
-		if ov, ok := overrides[key].(map[string]any); ok {
+		if ov, ok := uaOverrides[key].(map[string]any); ok {
 			if v, _ := ov["ua_value"].(string); v != "" {
 				resolved = v // channel override wins over everything
 			}
@@ -664,27 +699,48 @@ func applyChannelUA(cfg *config.Config, fileID, sourcePath, fileName string, cha
 			ch.UAPosition = fileUAPos
 		}
 		ch.UserAgent = resolved
+
+		// Referer resolution (same precedence as UA).
+		resolvedRef := fileRef
+		if ch.Referrer != "" {
+			resolvedRef = ch.Referrer
+		}
+		if ov, ok := refOverrides[key].(map[string]any); ok {
+			if v, _ := ov["referer_value"].(string); v != "" {
+				resolvedRef = v
+			}
+			if v, _ := ov["referrer_position"].(string); v != "" {
+				ch.ReferrerPosition = v
+			}
+		}
+		if ch.ReferrerPosition == "" {
+			ch.ReferrerPosition = fileRefPos
+		}
+		ch.Referrer = resolvedRef
 	}
 }
 
 // splitCleanURLAndUA splits a raw playlist URL line into the clean stream URL
-// (everything before the first '|') and any inline "User-Agent=..." value
-// carried after the '|' (Python parity: url_parts[1]). The '|' suffix must be
-// stripped before the parse-stage safety gate, but the UA is preserved so it
-// reaches the realtime test and the m3u output.
-func splitCleanURLAndUA(line string) (clean, inlineUA string) {
+// (everything before the first '|') and any inline "User-Agent=..." /
+// "Referer=..." values carried after the '|' (Python parity: url_parts[1]).
+// The '|' suffix must be stripped before the parse-stage safety gate, but the
+// headers are preserved so they reach the realtime test and the m3u output.
+func splitCleanURLAndUA(line string) (clean, inlineUA, inlineReferer string) {
 	if idx := strings.Index(line, "|"); idx >= 0 {
 		clean = line[:idx]
 		rest := line[idx+1:]
 		for _, part := range strings.Split(rest, "|") {
-			if i := strings.Index(strings.ToLower(part), "user-agent="); i >= 0 {
+			low := strings.ToLower(part)
+			if i := strings.Index(low, "user-agent="); i >= 0 {
 				inlineUA = part[i+len("user-agent="):]
-				break
+			}
+			if i := strings.Index(low, "referer="); i >= 0 {
+				inlineReferer = part[i+len("referer="):]
 			}
 		}
-		return clean, inlineUA
+		return clean, inlineUA, inlineReferer
 	}
-	return line, ""
+	return line, "", ""
 }
 
 // splitKV parses a "key=value" option string (e.g. from #EXTVLCOPT:).

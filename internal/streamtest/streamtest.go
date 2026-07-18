@@ -400,7 +400,7 @@ func (t *Tester) Test(ctx context.Context, ch types.Channel, p Params) types.Tes
 
 	// ---- probe ----
 	start := time.Now()
-	status, meta := t.probe(ctx, url, ch.UserAgent, p)
+	status, meta := t.probe(ctx, url, ch.UserAgent, ch.Referrer, p)
 	base.ResponseTime = time.Since(start).Seconds()
 	base.Resolution = meta.Resolution
 	base.Bitrate = meta.Bitrate
@@ -425,7 +425,7 @@ func (t *Tester) Test(ctx context.Context, ch types.Channel, p Params) types.Tes
 	base.Status = "success"
 
 	// ---- ad / loop detection (HTTP playlist probe) ----
-	if p.AdDetect && t.detectAdPlaylist(url, ch.UserAgent, p) {
+	if p.AdDetect && t.detectAdPlaylist(url, ch.UserAgent, ch.Referrer, p) {
 		base.Status = "failed"
 		base.Message = "ad/loop detected"
 		t.setCache(url, base, p.CacheTTL)
@@ -434,7 +434,7 @@ func (t *Tester) Test(ctx context.Context, ch types.Channel, p Params) types.Tes
 
 	// ---- download speed test ----
 	if p.SpeedTest {
-		if sp := t.speedTest(ctx, url, ch.UserAgent, p); sp > 0 {
+		if sp := t.speedTest(ctx, url, ch.UserAgent, ch.Referrer, p); sp > 0 {
 			base.DownloadSpeed = sp
 		}
 	}
@@ -450,23 +450,23 @@ func (t *Tester) Test(ctx context.Context, ch types.Channel, p Params) types.Tes
 }
 
 // probe runs ffprobe (preferred) and falls back to ffmpeg on failure.
-func (t *Tester) probe(ctx context.Context, u, ua string, p Params) (string, types.TestResult) {
+func (t *Tester) probe(ctx context.Context, u, ua, referer string, p Params) (string, types.TestResult) {
 	t.acquireFF()
 	defer t.releaseFF()
 
 	if t.ffprobePath != "" {
-		status, meta := t.probeFFprobe(ctx, u, ua, t.ffprobePath, p)
+		status, meta := t.probeFFprobe(ctx, u, ua, referer, t.ffprobePath, p)
 		if status == "success" || status == "timeout" {
 			return status, meta
 		}
 		// ffprobe failed (not a timeout): fall back to ffmpeg if present.
 		if t.ffmpegPath != "" {
-			return t.probeFFmpeg(ctx, u, ua, t.ffmpegPath, p, true)
+			return t.probeFFmpeg(ctx, u, ua, referer, t.ffmpegPath, p, true)
 		}
 		return status, meta
 	}
 	if t.ffmpegPath != "" {
-		return t.probeFFmpeg(ctx, u, ua, t.ffmpegPath, p, true)
+		return t.probeFFmpeg(ctx, u, ua, referer, t.ffmpegPath, p, true)
 	}
 	return "failed", types.TestResult{}
 }
@@ -496,7 +496,7 @@ type ffprobeOut struct {
 	} `json:"format"`
 }
 
-func (t *Tester) probeFFprobe(ctx context.Context, u, ua, bin string, p Params) (string, types.TestResult) {
+func (t *Tester) probeFFprobe(ctx context.Context, u, ua, referer string, bin string, p Params) (string, types.TestResult) {
 	timeout := p.Timeout + 2
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -510,6 +510,9 @@ func (t *Tester) probeFFprobe(ctx context.Context, u, ua, bin string, p Params) 
 		"-timeout", strconv.Itoa(p.Timeout * 1_000_000), u}
 	if ua != "" {
 		args = append(args, "-headers", "User-Agent: "+ua)
+	}
+	if referer != "" {
+		args = append(args, "-headers", "Referer: "+referer)
 	}
 	cmd := exec.CommandContext(cctx, bin, args...)
 	var stdout, stderr bytes.Buffer
@@ -559,7 +562,7 @@ func (t *Tester) probeFFprobe(ctx context.Context, u, ua, bin string, p Params) 
 	return "success", res
 }
 
-func (t *Tester) probeFFmpeg(ctx context.Context, u, ua, bin string, p Params, adCheck bool) (string, types.TestResult) {
+func (t *Tester) probeFFmpeg(ctx context.Context, u, ua, referer string, bin string, p Params, adCheck bool) (string, types.TestResult) {
 	timeout := p.Timeout + p.SpeedDuration + 5
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -567,6 +570,9 @@ func (t *Tester) probeFFmpeg(ctx context.Context, u, ua, bin string, p Params, a
 	args := []string{"-i", u, "-t", strconv.Itoa(p.SpeedDuration), "-f", "null", "-"}
 	if ua != "" {
 		args = append(args, "-user_agent", ua)
+	}
+	if referer != "" {
+		args = append(args, "-headers", "Referer: "+referer)
 	}
 	cmd := exec.CommandContext(cctx, bin, args...)
 	var stderr bytes.Buffer
@@ -605,19 +611,19 @@ func (t *Tester) probeFFmpeg(ctx context.Context, u, ua, bin string, p Params, a
 	return "success", res
 }
 
-func (t *Tester) speedTest(ctx context.Context, u, ua string, p Params) float64 {
+func (t *Tester) speedTest(ctx context.Context, u, ua, referer string, p Params) float64 {
 	if t.ffmpegPath == "" {
 		return 0
 	}
 	t.acquireFF()
 	defer t.releaseFF()
-	_, meta := t.probeFFmpeg(ctx, u, ua, t.ffmpegPath, p, false)
+	_, meta := t.probeFFmpeg(ctx, u, ua, referer, t.ffmpegPath, p, false)
 	return meta.DownloadSpeed
 }
 
 // detectAdPlaylist mirrors Python's _detect_ad_playlist: fetch the HLS playlist
 // head and look for ad keywords or a short VOD (ENDLIST) loop.
-func (t *Tester) detectAdPlaylist(u, ua string, p Params) bool {
+func (t *Tester) detectAdPlaylist(u, ua, referer string, p Params) bool {
 	lu := strings.ToLower(u)
 	if !strings.Contains(u, ".m3u8") && !strings.Contains(lu, "m3u") {
 		return false
@@ -629,6 +635,9 @@ func (t *Tester) detectAdPlaylist(u, ua string, p Params) bool {
 	}
 	if ua != "" {
 		req.Header.Set("User-Agent", ua)
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
