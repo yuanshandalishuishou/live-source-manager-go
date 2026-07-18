@@ -123,7 +123,10 @@ func DefaultValues() map[string]string {
 		"Filter.resolution_filter_mode": "range",
 		// [UserAgents]
 		"UserAgents.ua_position": "extinf",
-		"UserAgents.ua_enabled":  "False",
+		"UserAgents.ua_enabled":  "True",
+		// [Referrers]
+		"Referrers.referer_enabled":  "True",
+		"Referrers.referer_position": "extinf",
 	}
 }
 
@@ -329,7 +332,7 @@ func (c *Config) GetChannelUAOverrides() map[string]any {
 }
 
 // GetUAEnabled / GetUAPosition expose UA toggles.
-func (c *Config) GetUAEnabled() bool    { return c.GetBool("UserAgents", "ua_enabled", false) }
+func (c *Config) GetUAEnabled() bool    { return c.GetBool("UserAgents", "ua_enabled", true) }
 func (c *Config) GetUAPosition() string { return c.Get("UserAgents", "ua_position", "extinf") }
 
 // GetSourceFileRefererSettings / GetChannelRefererOverrides mirror the UA
@@ -356,7 +359,7 @@ func (c *Config) GetChannelRefererOverrides() map[string]any {
 
 // GetReferrerEnabled / GetReferrerPosition gate referer injection into the
 // generated M3U output (extinf attribute vs |Referer= url suffix).
-func (c *Config) GetReferrerEnabled() bool    { return c.GetBool("Referrers", "referer_enabled", false) }
+func (c *Config) GetReferrerEnabled() bool    { return c.GetBool("Referrers", "referer_enabled", true) }
 func (c *Config) GetReferrerPosition() string { return c.Get("Referrers", "referer_position", "extinf") }
 
 func splitLines(s string) []string {
