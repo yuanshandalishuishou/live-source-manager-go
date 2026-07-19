@@ -198,7 +198,7 @@
         if (f.type === "online") { typeLabel = "在线URL"; typeClass = "badge ok"; }
         else if (f.type === "github") {
           const dm = f.download_method || "raw";
-          const dmLabels = { raw: "raw", api: "API", proxy: "代理", mirror: "镜像" };
+          const dmLabels = { raw: "直连", mirror: "镜像" };
           typeLabel = "GitHub ";
           if (IS_ADMIN) {
             typeLabel += '<span class="badge" style="font-size:10px;cursor:pointer" title="点击切换下载方式" onclick="changeDownloadMethod(\'' + esc(f.id) + "','" + esc(dm) + "')\">#" + (dmLabels[dm] || dm) + "</span>";
@@ -587,9 +587,9 @@
       else toast(r.data.error || "删除失败", "error");
     };
     window.changeDownloadMethod = async function (fileId, currentMethod) {
-      const methods = ["raw", "api", "proxy", "mirror"];
-      const labels = { raw: "raw.githubusercontent.com", api: "GitHub API", proxy: "SOCKS/HTTP 代理", mirror: "代理网站" };
-      const dm = prompt("选择下载方式:\n1. raw\n2. api\n3. proxy\n4. mirror\n\n当前: " + (labels[currentMethod] || currentMethod), currentMethod);
+      const methods = ["raw", "mirror"];
+      const labels = { raw: "raw.githubusercontent.com 直连", mirror: "镜像站（需先配置 github_mirror）" };
+      const dm = prompt("选择下载通道:\n1. raw（直连）\n2. mirror（镜像，需先配置 github_mirror）\n\n当前: " + (labels[currentMethod] || currentMethod), currentMethod);
       if (!dm || !methods.includes(dm)) return;
       const r = await api("PUT", "/api/source-files/" + fileId, { download_method: dm });
       if (r.ok) { toast("下载方式已更新", "success"); loadSourceFiles(); }

@@ -356,6 +356,10 @@ func (s *Server) fileURLForID(id string) string {
 }
 
 func (s *Server) setGithubDownloadMethod(repo, dm string) {
+	// 仅允许 raw/mirror；非法值回退 raw，避免脏数据
+	if dm != "raw" && dm != "mirror" {
+		dm = "raw"
+	}
 	raw := s.cfg.Get("Sources", "github_source_settings", "{}")
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil || settings == nil {

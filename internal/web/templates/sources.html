@@ -78,12 +78,10 @@
     <input type="text" id="file-value" class="input" style="min-width:100%" placeholder="https://example.com/iptv.m3u">
     <div class="muted" id="value-help" style="font-size:12px;margin:6px 0"></div>
     <div id="method-group" style="display:none">
-      <label class="lbl">下载方式（仅 GitHub 源）</label>
+      <label class="lbl">下载通道（仅 GitHub 源）</label>
       <select id="download-method" class="input" style="min-width:100%">
-        <option value="raw" selected>raw.githubusercontent.com（默认）</option>
-        <option value="api">GitHub API（有速率限制）</option>
-        <option value="proxy">SOCKS/HTTP 代理</option>
-        <option value="mirror">代理网站（如 ghproxy.com）</option>
+        <option value="raw" selected>raw.githubusercontent.com 直连（默认）</option>
+        <option value="mirror">镜像站下载（需先在「系统设置」配置 github_mirror）</option>
       </select>
     </div>
     <div id="add-file-result"></div>

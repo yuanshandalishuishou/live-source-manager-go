@@ -217,7 +217,20 @@ func (m *Manager) CollectGitHub(ctx context.Context, repos []string, opts Collec
 		if ctx.Err() != nil {
 			break
 		}
-		urls, err := m.discoverGitHubFiles(client, ctx, repo, opts)
+		// per-repo download_method 覆盖下载通道：
+		//   raw    -> 强制直连 raw.githubusercontent.com，忽略全局 github_mirror
+		//   mirror -> 走全局 github_mirror（若未配置则回退为空=直连）
+		//   缺省/其他 -> 沿用全局 opts（与现有行为一致）
+		repoOpts := opts
+		if dm := m.githubDownloadMethodOf(repo); dm != "" {
+			switch dm {
+			case "raw":
+				repoOpts.Mirror = ""
+			case "mirror":
+				repoOpts.Mirror = opts.Mirror
+			}
+		}
+		urls, err := m.discoverGitHubFiles(client, ctx, repo, repoOpts)
 		if err != nil {
 			mu.Lock()
 			report.Errors = append(report.Errors, fmt.Sprintf("github %s: %v", repo, err))
@@ -353,6 +366,26 @@ func buildGitHubRawURL(owner, repo, branch, filePath, mirror string) string {
 		return strings.TrimRight(mirror, "/") + "/" + raw
 	}
 	return raw
+}
+
+// githubDownloadMethodOf 读取仓库的 per-repo 下载方式设置（raw/mirror）。
+// 与 web 包 downloadMethodOf 读取同一份 Sources.github_source_settings，保证
+// 列表展示、采集实际行为一致。返回空串表示未设置（沿用全局默认）。
+func (m *Manager) githubDownloadMethodOf(repo string) string {
+	if m.cfg == nil {
+		return ""
+	}
+	raw := m.cfg.Get("Sources", "github_source_settings", "{}")
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil || settings == nil {
+		return ""
+	}
+	if v, ok := settings[repo].(map[string]any); ok {
+		if dm, ok := v["download_method"].(string); ok && dm != "" {
+			return dm
+		}
+	}
+	return ""
 }
 
 // ── Collect All ────────────────────────────────────────────────────────────
