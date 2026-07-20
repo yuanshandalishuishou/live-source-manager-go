@@ -35,6 +35,30 @@ func strField(m map[string]any, key string) string {
 	return ""
 }
 
+// boolField 读取一个布尔字段，兼容 JSON 原生 bool 与字符串表示
+// （"true"/"1"/"on"/"yes"，大小写不敏感；"false"/"0"/"off"/"no" 视为 false）。
+// 第二个返回值 reported 表示请求体中是否真正提供了该字段，
+// 使调用方能够区分「未提供（保持原值）」与「显式设为 false」。
+// 注意：strField 对非 string 直接返回 ""，无法解析布尔，故此处单独处理。
+func boolField(m map[string]any, key string) (val bool, reported bool) {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(b)) {
+		case "true", "1", "on", "yes":
+			return true, true
+		case "false", "0", "off", "no", "":
+			return false, true
+		}
+	}
+	return false, false
+}
+
 func (s *Server) hHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -628,7 +629,10 @@ func (s *Server) hUpdateSourceFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "下载方式已更新"})
 		return
 	}
-	s.setUAConfig(id, m)
+	if err := s.setUAConfig(id, m); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	s.audit(r, "source_file_update", id, "更新源文件 UA 设置")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已更新"})
 }
@@ -896,7 +900,10 @@ func (s *Server) hGetSourceFileChannels(w http.ResponseWriter, r *http.Request) 
 func (s *Server) hSetSourceFileUA(w http.ResponseWriter, r *http.Request) {
 	id := routeParam(r, "file_id")
 	m := decodeBody(r)
-	s.setUAConfig(id, m)
+	if err := s.setUAConfig(id, m); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	s.audit(r, "source_file_ua", id, "设置源文件 UA")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "UA 已设置"})
 }
@@ -943,30 +950,34 @@ func (s *Server) hDeleteChannelUA(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "频道 UA 已删除", "file_id": id})
 }
 
-func (s *Server) setUAConfig(id string, m map[string]any) {
+func (s *Server) setUAConfig(id string, m map[string]any) error {
 	settings := s.cfg.GetSourceFileUASettings()
 	entry := map[string]any{}
 	if cur, ok := settings[id].(map[string]any); ok {
 		entry = cur
 	}
-	enabled := strField(m, "enabled")
-	uaValue := strField(m, "ua_value")
-	uaPosition := strField(m, "ua_position")
-	switch enabled {
-	case "true", "1", "on":
-		entry["enabled"] = true
-	case "false", "0", "off":
-		entry["enabled"] = false
+	// enabled 开关：仅当请求体真正提供时才更新（兼容 bool 与字符串两种传参）。
+	// 之前用 strField 取 enabled，对 JSON 布尔直接返回 ""，导致开关永远写不进库，
+	// 表现为「设置了 UA 却显示未设置 / 退出后不生效」。
+	if enabled, reported := boolField(m, "enabled"); reported {
+		entry["enabled"] = enabled
 	}
-	if uaValue != "" {
+	if uaValue := strField(m, "ua_value"); uaValue != "" {
 		entry["ua_value"] = uaValue
 	}
-	if uaPosition != "" {
+	if uaPosition := strField(m, "ua_position"); uaPosition != "" {
 		entry["ua_position"] = uaPosition
+	}
+	// 防御：启用 UA 却无 UA 值属非法状态，拒绝保存，避免脏数据注入空 UA。
+	if en, _ := entry["enabled"].(bool); en {
+		if v, _ := entry["ua_value"].(string); v == "" {
+			return errors.New("启用 UA 时必须填写 UA 值")
+		}
 	}
 	settings[id] = entry
 	raw, _ := json.Marshal(settings)
 	s.cfg.Set("Sources", "source_file_ua_settings", string(raw))
+	return nil
 }
 
 func (s *Server) delUAConfig(id string) {
