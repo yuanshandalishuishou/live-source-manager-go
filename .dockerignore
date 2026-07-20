@@ -1,7 +1,7 @@
 # =============================================================
 # .dockerignore — 缩减 Docker 构建上下文
 # 仅排除「运行期产物 / 无关目录」，绝不排除 Dockerfile 依赖的文件：
-#   go.mod  go.sum  main.go  internal/  web/  config/channel_rules.yml
+#   go.mod  go.sum  main.go  internal/  internal/web/  config/channel_rules.yml
 #   start_docker.sh  healthcheck.sh  tools/
 # =============================================================
 
@@ -28,6 +28,11 @@ tools/ffmpeg/
 log/
 *.log
 data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 config/online/
 config/sources/
 www/output/

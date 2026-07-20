@@ -27,8 +27,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
+User=__RUN_USER__
+Group=__RUN_USER__
 WorkingDirectory=__PROJECT_DIR__
 
 # 如需自定义管理员密码（强烈建议），取消下面注释并填入；

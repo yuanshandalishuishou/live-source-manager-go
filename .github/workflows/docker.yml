@@ -28,7 +28,7 @@ on:
       - "go.sum"
       - "main.go"
       - "internal/**"
-      - "web/**"
+      - "internal/web/**"
       - "config/**"
       - ".github/workflows/docker.yml"
   workflow_dispatch:

@@ -20,7 +20,7 @@ echo "=== 直播源管理工具启动脚本 (Go 版 / SQLite) ==="
 mkdir -p "${APP_DIR}/data" "${APP_DIR}/www/output" "${APP_DIR}/log" \
          "${APP_DIR}/config/sources" "${APP_DIR}/config/online"
 
-# 管理员密码（空则二进制默认 admin123456 并告警，请尽快修改）
+# 管理员密码（空则二进制默认 Admin@123 并告警，请尽快修改）
 export LSM_ADMIN_PASSWORD="${LSM_ADMIN_PASSWORD:-}"
 
 # 可选端口 / 监听地址覆盖（通过环境变量传参给二进制）

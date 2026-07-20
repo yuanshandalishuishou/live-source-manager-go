@@ -58,7 +58,7 @@ docker pull ghcr.io/<owner>/live-source-manager-go:latest
 |------------|------|----------|
 | `/app/data` | SQLite 数据库（配置/用户/会话/审计） | 必挂（持久化） |
 | `/app/www/output` | M3U/TXT 播放列表输出 | 必挂 |
-| `/app/log` | 日志 | 建议挂 |
+| `/app/log` | 日志（按 `Logging.max_size` MB / `Logging.backup_count` 自动轮转，不无限增长） | 建议挂 |
 | `/app/config/sources` | 本地直播源文件（只读扫描） | 可选 ro |
 | `/app/config/online` | 在线源下载目录（运行时写） | 可选 rw |
 | `/app/config/channel_rules.yml` | 分类词典（镜像内已内嵌一份） | 可选覆盖 |

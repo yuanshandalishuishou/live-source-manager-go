@@ -63,7 +63,7 @@ func main() {
 
 	cfg := config.New(conn)
 
-	// Apply logging config.
+	// Apply logging config (file + size-bounded rotation, mirroring Python).
 	logPath := *logFile
 	if logPath == "" {
 		logPath = cfg.Get("Logging", "file", "./log/app.log")
@@ -72,7 +72,9 @@ func main() {
 		if dir := filepath.Dir(logPath); dir != "" {
 			_ = os.MkdirAll(dir, 0o755)
 		}
-		logger.SetDefault(logger.New(levelFromConfig(cfg), logPath))
+		maxSize := cfg.GetInt("Logging", "max_size", 10)
+		backupCount := cfg.GetInt("Logging", "backup_count", 5)
+		logger.SetDefault(logger.NewRotating(levelFromConfig(cfg), logPath, maxSize, backupCount))
 	}
 	setLogLevel(cfg)
 
@@ -157,6 +159,7 @@ func main() {
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
 	log.Info("已停止")
+	logger.L().Close()
 }
 
 func ensureAdmin(conn *sql.DB, log *logger.Logger) {

@@ -48,9 +48,9 @@ live-source-manager-go/
 │   ├── rules/               # 分类规则引擎 + 词典种子
 │   ├── manager/             # 流水线编排 + UI 频道缓存 + 调度器
 │   ├── auth/                # bcrypt / 会话
-│   ├── web/                 # 路由、中间件、处理器、嵌入模板
+│   ├── web/                 # 路由、中间件、处理器、嵌入模板（internal/web/）
 │   └── ...
-├── web/                     # 前端模板（被 //go:embed 打包进二进制）
+├── internal/web/            # 前端模板与静态资源（被 //go:embed 打包进二进制）
 ├── config/
 │   └── channel_rules.yml    # 分类受控词表（词典种子源）
 ├── deploy/                  # Linux systemd + Windows 自启脚本

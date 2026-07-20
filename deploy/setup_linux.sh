@@ -86,7 +86,7 @@ if [ ! -f "$UNIT_SRC" ]; then
 fi
 
 echo "[systemd] 渲染单元 -> $UNIT_DST"
-sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$UNIT_SRC" > "$UNIT_DST"
+sed -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" -e "s|__RUN_USER__|$RUN_USER|g" "$UNIT_SRC" > "$UNIT_DST"
 chmod 644 "$UNIT_DST"
 
 if command -v systemctl >/dev/null 2>&1; then
@@ -103,5 +103,5 @@ fi
 echo "=== 部署完成 ==="
 echo "管理界面: http://<本机IP>:23456/"
 echo "文件发布: http://<本机IP>:12345/"
-echo "默认管理员: admin（未设置 LSM_ADMIN_PASSWORD 时随机生成强密码，已打印到日志 ADMIN_PASSWORD_INITIALIZED=）"
+echo "默认管理员: admin（未设置 LSM_ADMIN_PASSWORD 时默认密码 Admin@123，已打印到日志 ADMIN_PASSWORD_INITIALIZED=）"
 echo "请尽快用该密码登录，或在 Web「用户管理」中修改；或部署前用环境变量 LSM_ADMIN_PASSWORD 指定。"
