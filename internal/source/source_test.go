@@ -58,3 +58,64 @@ javascript:alert(1)
 		}
 	}
 }
+
+// TestParseTXTSkipsComments verifies that when M3U content is mistakenly fed to
+// ParseTXT (e.g. due to a .txt extension), playlist directive/comment lines are
+// skipped instead of being logged as bogus URLs — fixing the 3362-line log spam.
+func TestParseTXTSkipsComments(t *testing.T) {
+	txt := `#EXTM3U
+#EXTINF:-1 tvg-name="CCTV1",CCTV-1
+http://example.com/cctv1.m3u8
+#http://commented.out/x.m3u8
+#EXTINF:-1,RTMP Source
+rtmp://example.com/live/2
+`
+	chs := ParseTXT(txt, "f9", "mislabeled.txt")
+	if len(chs) != 2 {
+		t.Fatalf("expected 2 channels, got %d: %+v", len(chs), chs)
+	}
+	if chs[0].URL != "http://example.com/cctv1.m3u8" {
+		t.Errorf("unexpected first URL: %q", chs[0].URL)
+	}
+	if chs[1].URL != "rtmp://example.com/live/2" {
+		t.Errorf("unexpected second URL: %q", chs[1].URL)
+	}
+}
+
+func TestLooksLikeHTML(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"doctype", "<!DOCTYPE html><html><body>x</body></html>", true},
+		{"meta", "<meta property=\"og:title\" content=\"x\">", true},
+		{"m3u", "#EXTM3U\nhttp://example.com/a.m3u8", false},
+		{"plain-url", "http://example.com/a.m3u8", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeHTML(c.in); got != c.want {
+			t.Errorf("%s: looksLikeHTML=%v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestLooksLikeM3U(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"extm3u", "#EXTM3U\nhttp://example.com/a.m3u8", true},
+		{"extinf", "#EXTINF:-1,CCTV1\nhttp://example.com/a.m3u8", true},
+		{"comment-then-extinf", "# My List\n#EXTINF:-1,CCTV1\nhttp://x", true},
+		{"plain-url", "http://example.com/a.m3u8\nrtmp://x/b", false},
+		{"empty", "", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeM3U(c.in); got != c.want {
+			t.Errorf("%s: looksLikeM3U=%v want %v", c.name, got, c.want)
+		}
+	}
+}

@@ -85,8 +85,14 @@ func (m *Manager) CollectLocal(paths []string, opts CollectOptions) (*CollectRep
 	for _, p := range paths {
 		info, err := os.Stat(p)
 		if err != nil {
-			report.FileErrors[p] = err.Error()
-			logger.L().Warning("本地源路径不存在，跳过: %s (%v)", p, err)
+			// C: 运行期目录可能尚未创建（如 config/sources 为运行时下载目录），
+			// 自动创建空目录后视为无文件，避免每次采集都刷 WARNING 噪音。
+			if mkErr := os.MkdirAll(p, 0755); mkErr != nil {
+				report.FileErrors[p] = err.Error()
+				logger.L().Warning("本地源路径不存在且无法创建，跳过: %s (%v)", p, err)
+				continue
+			}
+			logger.L().Info("本地源路径不存在，已自动创建空目录: %s", p)
 			continue
 		}
 		if info.IsDir() {
@@ -467,11 +473,24 @@ func mergeReport(dst, src *CollectReport) {
 // ── Shared parsing entry ───────────────────────────────────────────────────
 
 func (m *Manager) parseContentInto(content, fileID, fileName, sourcePath, fileType string, size int64, report *CollectReport) {
+	// D: 下载/抓取到的内容若是 HTML 页面（如 GitHub 代理站返回的包装页），
+	// 整段丢弃并只记一条 WARNING，避免逐行当 URL 解析产生海量刷屏日志。
+	if looksLikeHTML(content) {
+		logger.L().Warning("源内容非播放列表(疑似 HTML 页面)，已跳过: %s", fileName)
+		report.SourceFiles = append(report.SourceFiles, types.SourceFile{
+			ID: fileID, Name: fileName, Path: sourcePath, Type: fileType,
+			ChannelCount: 0, Size: size, UpdatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		})
+		return
+	}
+	// B: content-aware 选择解析器。文件扩展名不可靠（在线源常无扩展名或误标 .txt），
+	// 若内容本身是 M3U（含 #EXTM3U/#EXTINF 标记）则强制走 ParseM3U，恢复正确的
+	// 频道名/logo 配对；否则仅当扩展名为 .txt 才走 ParseTXT（纯 URL 列表）。
 	var channels []types.Channel
-	if strings.EqualFold(filepath.Ext(fileName), ".txt") {
-		channels = ParseTXT(content, fileID, fileName)
-	} else {
+	if looksLikeM3U(content) || !strings.EqualFold(filepath.Ext(fileName), ".txt") {
 		channels = ParseM3U(content, fileID, fileName)
+	} else {
+		channels = ParseTXT(content, fileID, fileName)
 	}
 	// Layer file-level + channel-level UA configs on top of the UA the parser
 	// already extracted from each source (Python parity: file_ua + overrides).
@@ -487,6 +506,40 @@ func (m *Manager) parseContentInto(content, fileID, fileName, sourcePath, fileTy
 	}
 	report.SourceFiles = append(report.SourceFiles, sf)
 	report.Channels = append(report.Channels, channels...)
+}
+
+// looksLikeHTML reports whether the content looks like an HTML page rather than
+// a playlist, so proxy/error pages can be skipped without per-line parse noise.
+func looksLikeHTML(content string) bool {
+	s := strings.TrimSpace(content)
+	if s == "" || !strings.HasPrefix(s, "<") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "<!doctype html") ||
+		strings.Contains(lower, "<html") ||
+		strings.Contains(lower, "<meta") ||
+		strings.Contains(lower, "<head") ||
+		strings.Contains(lower, "<body")
+}
+
+// looksLikeM3U reports whether content is an M3U/M3U8 playlist, so it is parsed
+// with ParseM3U even when the file extension is .txt or missing.
+func looksLikeM3U(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#EXTM3U") || strings.HasPrefix(line, "#EXTINF") {
+			return true
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		return false
+	}
+	return false
 }
 
 // ── Low-level parsers (also used by manager/web) ───────────────────────────
@@ -618,6 +671,11 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 func parseTXT(content, fileID, fileName string, exclusions map[string]string) []types.Channel {
 	var channels []types.Channel
 	for _, line := range util.SplitLines(content) {
+		// A: 跳过播放列表指令/注释行（#EXTM3U、#EXTINF、#http 注释掉的 URL 等），
+		// 仅当 m3u 内容误入 TXT 分支时，避免把频道属性行当 URL 逐行刷屏。
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
 		cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(line)
 		streamURL := cleanURL
 		ok, reason, _ := security.IsStaticSafe(streamURL)
