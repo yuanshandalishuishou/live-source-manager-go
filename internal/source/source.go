@@ -568,25 +568,25 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			extinf := line
 			i++ // consume the #EXTINF line
 
-		// Skip #EXTVLCOPT: and other #EXT* directives until the URL line.
-		// Capture per-source UA / Referer from #EXTVLCOPT:http-user-agent= /
-		// #EXTVLCOPT:http-referrer= (Python parity).
-		var extvlcUA, extvlcReferer string
-		for i < len(lines) {
-			peek := strings.TrimSpace(lines[i])
-			if strings.HasPrefix(peek, "#EXTVLCOPT:") {
-				opt := strings.TrimSpace(peek[len("#EXTVLCOPT:"):])
-				if k, v, ok := splitKV(opt); ok {
-					switch {
-					case strings.EqualFold(k, "http-user-agent"):
-						extvlcUA = v
-					case strings.EqualFold(k, "http-referrer"), strings.EqualFold(k, "http-referer"):
-						extvlcReferer = v
+			// Skip #EXTVLCOPT: and other #EXT* directives until the URL line.
+			// Capture per-source UA / Referer from #EXTVLCOPT:http-user-agent= /
+			// #EXTVLCOPT:http-referrer= (Python parity).
+			var extvlcUA, extvlcReferer string
+			for i < len(lines) {
+				peek := strings.TrimSpace(lines[i])
+				if strings.HasPrefix(peek, "#EXTVLCOPT:") {
+					opt := strings.TrimSpace(peek[len("#EXTVLCOPT:"):])
+					if k, v, ok := splitKV(opt); ok {
+						switch {
+						case strings.EqualFold(k, "http-user-agent"):
+							extvlcUA = v
+						case strings.EqualFold(k, "http-referrer"), strings.EqualFold(k, "http-referer"):
+							extvlcReferer = v
+						}
 					}
+					i++
+					continue
 				}
-				i++
-				continue
-			}
 				if strings.HasPrefix(peek, "#") && !strings.HasPrefix(peek, "#EXTINF:") {
 					i++
 					continue
@@ -600,8 +600,8 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			if urlLine == "" || strings.HasPrefix(urlLine, "#") {
 				continue
 			}
-		cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(urlLine)
-		streamURL := cleanURL
+			cleanURL, inlineUA, inlineReferer := splitCleanURLAndUA(urlLine)
+			streamURL := cleanURL
 			ok, reason, _ := security.IsStaticSafe(streamURL)
 			if !ok {
 				if exclusions != nil {
@@ -614,24 +614,24 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 			// UA priority (Python parity): inline(|User-Agent=) > #EXTVLCOPT:http-user-agent
 			// > EXTINF http-user-agent attribute. File-level / channel-level config is
 			// layered on top later in applyChannelUA.
-		ua := pickFirstNonEmpty(inlineUA, extvlcUA, extractAttr(extinf, "http-user-agent"))
-		// Referer priority (Python parity, but actually consumed here):
-		// inline(|Referer=) > #EXTVLCOPT:http-referrer > EXTINF http-referrer attr.
-		referer := pickFirstNonEmpty(inlineReferer, extvlcReferer, extractAttr(extinf, "http-referrer"), extractAttr(extinf, "http-referer"))
-		ch := types.Channel{
-			ID:          util.ChannelID(name, streamURL),
-			Name:        name,
-			URL:         streamURL,
-			URLOriginal: streamURL,
-			Logo:        extractAttr(extinf, "tvg-logo"),
-			Group:       extractAttr(extinf, "group-title"),
-			FileID:      fileID,
-			FileName:    fileName,
-			UserAgent:   ua,
-			Referrer:    referer,
-			Categories:  nil,
-			Status:      "",
-		}
+			ua := pickFirstNonEmpty(inlineUA, extvlcUA, extractAttr(extinf, "http-user-agent"))
+			// Referer priority (Python parity, but actually consumed here):
+			// inline(|Referer=) > #EXTVLCOPT:http-referrer > EXTINF http-referrer attr.
+			referer := pickFirstNonEmpty(inlineReferer, extvlcReferer, extractAttr(extinf, "http-referrer"), extractAttr(extinf, "http-referer"))
+			ch := types.Channel{
+				ID:          util.ChannelID(name, streamURL),
+				Name:        name,
+				URL:         streamURL,
+				URLOriginal: streamURL,
+				Logo:        extractAttr(extinf, "tvg-logo"),
+				Group:       extractAttr(extinf, "group-title"),
+				FileID:      fileID,
+				FileName:    fileName,
+				UserAgent:   ua,
+				Referrer:    referer,
+				Categories:  nil,
+				Status:      "",
+			}
 			channels = append(channels, ch)
 			continue
 		}

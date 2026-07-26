@@ -51,9 +51,9 @@ func DefaultValues() map[string]string {
 			"cymz6/AutoIPTV-Hotel",
 			"Rivens7/Livelist",
 		}, "\n"),
-		"Sources.github_source_settings":  "{}",
-		"Sources.source_file_ua_settings": "{}",
-		"Sources.channel_ua_overrides":    "{}",
+		"Sources.github_source_settings":       "{}",
+		"Sources.source_file_ua_settings":      "{}",
+		"Sources.channel_ua_overrides":         "{}",
 		"Sources.source_file_referer_settings": "{}",
 		"Sources.channel_referer_overrides":    "{}",
 		// [Network]
@@ -359,8 +359,10 @@ func (c *Config) GetChannelRefererOverrides() map[string]any {
 
 // GetReferrerEnabled / GetReferrerPosition gate referer injection into the
 // generated M3U output (extinf attribute vs |Referer= url suffix).
-func (c *Config) GetReferrerEnabled() bool    { return c.GetBool("Referrers", "referer_enabled", true) }
-func (c *Config) GetReferrerPosition() string { return c.Get("Referrers", "referer_position", "extinf") }
+func (c *Config) GetReferrerEnabled() bool { return c.GetBool("Referrers", "referer_enabled", true) }
+func (c *Config) GetReferrerPosition() string {
+	return c.Get("Referrers", "referer_position", "extinf")
+}
 
 func splitLines(s string) []string {
 	if strings.TrimSpace(s) == "" {

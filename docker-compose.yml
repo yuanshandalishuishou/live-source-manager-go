@@ -47,7 +47,7 @@ services:
     environment:
       # 时区
       - TZ=Asia/Shanghai
-      # 管理员密码（留空则首次启动使用默认 admin123456，请尽快修改）
+      # 管理员密码（留空则首次启动使用默认 Admin@123，请尽快修改）
       - LSM_ADMIN_PASSWORD=${LSM_ADMIN_PASSWORD:-}
       # 管理端口（映射到容器内 23456）
       - MANAGER_PORT=${MANAGER_PORT:-23456}

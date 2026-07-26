@@ -3,27 +3,27 @@ package types
 
 // Channel represents a single parsed live-stream entry (#EXTINF) from an M3U/TXT source file.
 type Channel struct {
-	ID            string            `json:"id"` // md5(name|url)[:12]
-	Name          string            `json:"name"`
-	URL           string            `json:"url"`
-	URLOriginal   string            `json:"url_original"`
-	Logo          string            `json:"logo"`
-	Group         string            `json:"group"`
-	FileID        string            `json:"file_id"`
-	FileName      string            `json:"file_name"`
-	UserAgent     string            `json:"user_agent"`
-	UAPosition    string            `json:"ua_position"`
-	Referrer      string            `json:"referrer"`
-	ReferrerPosition string         `json:"referrer_position"`
-	Categories    map[string]string `json:"categories"`
-	Status        string            `json:"status"`         // success | failed | timeout | connection_failed | ...
-	ResponseTime  float64           `json:"response_time"`  // seconds
-	DownloadSpeed float64           `json:"download_speed"` // KB/s
-	Resolution    string            `json:"resolution"`
-	Bitrate       int               `json:"bitrate"`
-	FPS           float64           `json:"fps"`
-	MediaType     string            `json:"media_type"`
-	IsQualified   bool              `json:"is_qualified"`
+	ID               string            `json:"id"` // md5(name|url)[:12]
+	Name             string            `json:"name"`
+	URL              string            `json:"url"`
+	URLOriginal      string            `json:"url_original"`
+	Logo             string            `json:"logo"`
+	Group            string            `json:"group"`
+	FileID           string            `json:"file_id"`
+	FileName         string            `json:"file_name"`
+	UserAgent        string            `json:"user_agent"`
+	UAPosition       string            `json:"ua_position"`
+	Referrer         string            `json:"referrer"`
+	ReferrerPosition string            `json:"referrer_position"`
+	Categories       map[string]string `json:"categories"`
+	Status           string            `json:"status"`         // success | failed | timeout | connection_failed | ...
+	ResponseTime     float64           `json:"response_time"`  // seconds
+	DownloadSpeed    float64           `json:"download_speed"` // KB/s
+	Resolution       string            `json:"resolution"`
+	Bitrate          int               `json:"bitrate"`
+	FPS              float64           `json:"fps"`
+	MediaType        string            `json:"media_type"`
+	IsQualified      bool              `json:"is_qualified"`
 }
 
 // SourceFile represents a source file (local dir file, downloaded online file, or github file).
