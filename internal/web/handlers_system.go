@@ -79,7 +79,12 @@ func (s *Server) hSystemInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hGetNetwork(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "network": s.cfg.GetNetworkConfig()})
+	net := s.cfg.GetNetworkConfig()
+	// Secret: never return the real token; the UI shows set/unset via
+	// github_token_set from /api/system/info and only posts a new value when
+	// the operator types one (empty = keep existing).
+	net["github_token"] = ""
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "network": net})
 }
 
 func (s *Server) hUpdateNetwork(w http.ResponseWriter, r *http.Request) {

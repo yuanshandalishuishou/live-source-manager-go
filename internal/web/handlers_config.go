@@ -51,6 +51,8 @@ func (s *Server) hGetConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 	dv := config.DefaultValues()
 	ks := sectionKeySet()
+	optsMap := config.FieldOptions()
+	secMap := config.SecretKeys()
 	fields := map[string]map[string]map[string]any{}
 	secs := []string{}
 	for sec, keys := range ks {
@@ -59,10 +61,17 @@ func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 		for key := range keys {
 			dk := sec + "." + key
 			def := dv[dk]
+			// Secret fields must never return their real value to the UI.
+			val := ""
+			if !secMap[dk] {
+				val = s.cfg.Get(sec, key, "")
+			}
 			fields[sec][key] = map[string]any{
 				"type":    inferType(def),
 				"default": def,
-				"value":   s.cfg.Get(sec, key, ""),
+				"value":   val,
+				"options": optsMap[dk],
+				"secret":  secMap[dk],
 			}
 		}
 	}

@@ -130,6 +130,33 @@ func DefaultValues() map[string]string {
 	}
 }
 
+// FieldOptions lists fixed choices for config keys that should render as a
+// <select> in the UI instead of a free-text input.
+func FieldOptions() map[string][]string {
+	return map[string][]string{
+		"Network.proxy_type":             {"socks5", "http"},
+		"Testing.auto_scan_mode":        {"interval", "daily"},
+		"Testing.output_sort_by":        {"speed", "resolution", "name"},
+		"Output.group_by":               {"category", "country", "name"},
+		"Filter.resolution_filter_mode": {"range", "min", "max"},
+		"Filter.min_resolution":         {"240p", "360p", "480p", "720p", "1080p", "1440p", "4k"},
+		"Filter.max_resolution":         {"240p", "360p", "480p", "720p", "1080p", "1440p", "4k"},
+		"UserAgents.ua_position":        {"extinf", "url"},
+		"Referrers.referer_position":    {"extinf", "url"},
+		"Logging.level":                 {"DEBUG", "INFO", "WARNING", "ERROR"},
+	}
+}
+
+// SecretKeys are config keys whose values must be masked in the UI and skipped
+// when left empty on save (password-like fields).
+func SecretKeys() map[string]bool {
+	return map[string]bool{
+		"Network.proxy_password": true,
+		"Network.proxy_username": true,
+		"GitHub.api_token":       true,
+	}
+}
+
 // Config reads/writes configuration from the SQLite app_config table.
 type Config struct {
 	conn *sql.DB

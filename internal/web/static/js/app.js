@@ -680,6 +680,30 @@
   async function initConfig() {
     if (!$("#cfg-form")) return;
     let fields = {}, values = {};
+    function renderCfgField(sec, k, field, curVal) {
+      const typ = field && field.type ? field.type : "string";
+      const opts = field && field.options ? field.options : null;
+      const secret = !!(field && field.secret);
+      const fv = (field && field.value != null && field.value !== "") ? field.value : "";
+      const val = (curVal != null && curVal !== "") ? curVal : ((field && field.default != null) ? field.default : "");
+      const id = "cfg-" + sec + "-" + k;
+      if (secret) {
+        const set = (curVal != null && curVal !== "") || fv !== "";
+        const ph = set ? "（已设置，留空不改）" : "（未设置）";
+        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="password" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" data-secret="1" value="" placeholder="${esc(ph)}"></label>`;
+      }
+      if (typ === "bool") {
+        const checked = ("" + val) === "True" || ("" + val) === "true" || ("" + val) === "1" ? "checked" : "";
+        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input type="checkbox" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" ${checked}></label>`;
+      }
+      if (opts && opts.length) {
+        const cur = "" + val;
+        const optsHtml = opts.map((o) => `<option value="${esc(o)}"${o === cur ? " selected" : ""}>${esc(o)}</option>`).join("");
+        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><select class="input" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}">${optsHtml}</select></label>`;
+      }
+      const inputType = (typ === "int" || typ === "float") ? "number" : "text";
+      return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="${inputType}" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" value="${esc(val)}"></label>`;
+    }
     async function load() {
       const [f, v] = await Promise.all([api("GET", "/api/config/fields"), api("GET", "/api/config")]);
       fields = f.data.fields || f.data || {}; values = v.data || {};
@@ -687,18 +711,18 @@
       $("#cfg-form").innerHTML = Object.keys(secs).map((sec) => {
         const fv = fields[sec] || {}; const vv = values[sec] || {};
         const items = Object.keys(fv).length ? fv : vv;
-        return `<div class="card"><h3>${esc(sec)}</h3>${Object.keys(items).map((k) => {
-          const val = vv[k] != null ? vv[k] : (fv[k] && fv[k].default != null ? fv[k].default : "");
-          return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span>
-            <input class="input" data-sec="${esc(sec)}" data-key="${esc(k)}" value="${esc(val)}"></label>`;
-        }).join("")}</div>`;
+        return `<div class="card"><h3>${esc(sec)}</h3>${Object.keys(items).map((k) => renderCfgField(sec, k, items[k], vv[k])).join("")}</div>`;
       }).join("") || '<div class="muted">无配置</div>';
     }
     $("#cfg-save").onclick = async () => {
       const cfg = {};
-      $$("#cfg-form input[data-sec]").forEach((inp) => {
-        const s = inp.getAttribute("data-sec"), k = inp.getAttribute("data-key");
-        cfg[s] = cfg[s] || {}; cfg[s][k] = inp.value;
+      $$("#cfg-form [data-sec]").forEach((el) => {
+        const s = el.getAttribute("data-sec"), k = el.getAttribute("data-key");
+        let v;
+        if (el.type === "checkbox") v = el.checked ? "True" : "False";
+        else v = el.value;
+        if (el.getAttribute("data-secret") && v === "") return; // 密码留空不改
+        cfg[s] = cfg[s] || {}; cfg[s][k] = v;
       });
       const r = await api("PUT", "/api/config", cfg);
       $("#cfg-msg").textContent = r.ok ? "已保存" : (r.data.error || "失败");
@@ -733,15 +757,18 @@
     }
     const n = (net.data && net.data.network) || {};
     const isSecret = (k) => k === "proxy_password" || k === "proxy_username" || k === "github_token";
+    const tokenSet = !!(s && s.github_token_set);
     let netHtml = Object.keys(n).map((k) => {
       const secret = isSecret(k);
       const val = secret ? "" : n[k];
-      const ph = secret ? (n[k] ? "（已设置，留空不改）" : "（未设置）") : "";
+      let ph = "";
+      if (secret) {
+        if (k === "github_token") ph = tokenSet ? "（已设置，留空不改）" : "（未设置）";
+        else ph = n[k] ? "（已设置，留空不改）" : "（未设置）";
+      }
       return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span>
       <input class="input" type="${secret ? "password" : "text"}" data-net="${esc(k)}" value="${esc(val)}" placeholder="${esc(ph)}"></label>`;
     }).join("");
-    netHtml += `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">github_token</span>
-    <input class="input" type="password" data-net="github_token" value="" placeholder="（未设置，留空不改）"></label>`;
     $("#net-info").innerHTML = netHtml;
     const saveBtn = $("#net-save");
     if (saveBtn) {
