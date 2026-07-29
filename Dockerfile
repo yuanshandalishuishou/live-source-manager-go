@@ -57,20 +57,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         tzdata \
         procps \
+        ffmpeg \
     && ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
     && echo ${TZ} > /etc/timezone \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/data /app/www/output /app/log /app/config/sources /app/config/online
 
-# 可选组件：FFmpeg / FFprobe（流媒体探测用）
-# 下载/解压失败仅告警跳过，不阻断镜像构建（与 Python 版一致）
-RUN ( curl -fsSL https://github.com/BtbN/FFmpeg-Builds/releases/download/master/ffmpeg-master-latest-linux64-gpl.tar.xz -o /tmp/ff.tar.xz \
-      && tar -xf /tmp/ff.tar.xz -C /tmp \
-      && cp /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ \
-      && cp /tmp/ffmpeg-*/ffprobe /usr/local/bin/ \
-      && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-      && echo "FFmpeg installed: $(ffmpeg -version | head -1)" ) \
-    || echo "WARN: ffmpeg download/extract failed, skipping (optional component)"
+# FFmpeg 改用 Debian 官方仓库安装（已在上方 apt-get install 一并装好，路径 /usr/bin，在 PATH 内）
+# 不再从 GitHub 下载静态包：构建稳定，且安装失败会直接令构建失败而非静默跳过。
+# 双保险：软链 /app/tools/ffmpeg/{ffmpeg,ffprobe} -> /usr/bin
+# 兼容程序「项目内 tools/ffmpeg 目录」查找逻辑，也方便用户挂载宿主二进制到该目录
+RUN mkdir -p /app/tools/ffmpeg \
+    && ln -sf /usr/bin/ffmpeg /app/tools/ffmpeg/ffmpeg \
+    && ln -sf /usr/bin/ffprobe /app/tools/ffmpeg/ffprobe \
+    && echo "FFmpeg ready: $(ffmpeg -version | head -1)"
 
 # 二进制 + 分类词典 + 启动脚本
 COPY --from=builder /out/lsm /app/lsm
