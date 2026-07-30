@@ -59,6 +59,41 @@ else
     fi
 fi
 
+# ---- 1.5 确保 ffmpeg/ffprobe 可用（流测试依赖，三平台部署硬性要求）----
+ensure_ffmpeg() {
+    # 已可用（项目内或 PATH）则跳过
+    if [ -x "$PROJECT_DIR/tools/ffmpeg/ffprobe" ] || command -v ffprobe >/dev/null 2>&1; then
+        echo "[ffmpeg] 已可用: $(command -v ffprobe 2>/dev/null || echo "$PROJECT_DIR/tools/ffmpeg/ffprobe")"
+        return 0
+    fi
+    echo "[ffmpeg] 未检测到 ffprobe，尝试通过包管理器安装 ..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y ffmpeg && return 0
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y ffmpeg && return 0
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y ffmpeg && return 0
+    elif command -v apk >/dev/null 2>&1; then
+        apk add ffmpeg && return 0
+    fi
+    # 兜底：下载静态构建到项目 tools/ffmpeg/
+    echo "[ffmpeg] 包管理器安装失败，下载静态构建 ..."
+    mkdir -p "$PROJECT_DIR/tools/ffmpeg"
+    TMP_FF="$(mktemp -d)"
+    if curl -fsSL -o "$TMP_FF/ffmpeg.tar.xz" https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+        && tar -xf "$TMP_FF/ffmpeg.tar.xz" -C "$TMP_FF"; then
+        cp "$TMP_FF"/ffmpeg-*/ffmpeg "$TMP_FF"/ffmpeg-*/ffprobe "$PROJECT_DIR/tools/ffmpeg/"
+        chmod +x "$PROJECT_DIR/tools/ffmpeg/ffmpeg" "$PROJECT_DIR/tools/ffmpeg/ffprobe"
+        rm -rf "$TMP_FF"
+        echo "[ffmpeg] 静态构建就绪: $PROJECT_DIR/tools/ffmpeg/"
+        return 0
+    fi
+    rm -rf "$TMP_FF"
+    echo "[ffmpeg] ⚠️ 自动安装失败，流测试功能将不可用；请手动安装 ffmpeg 或放置二进制到 $PROJECT_DIR/tools/ffmpeg/"
+    return 1
+}
+ensure_ffmpeg || true
+
 # ---- 2. 创建运行时目录 ----
 echo "[dirs] 创建运行时目录 ..."
 mkdir -p "$PROJECT_DIR/data" \
