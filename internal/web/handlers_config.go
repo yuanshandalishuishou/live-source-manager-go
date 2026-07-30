@@ -61,9 +61,17 @@ func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 		for key := range keys {
 			dk := sec + "." + key
 			def := dv[dk]
-			// Secret fields must never return their real value to the UI.
 			val := ""
-			if !secMap[dk] {
+			set := false
+			if secMap[dk] {
+				// Secret fields must never return their real value. If a
+				// value is stored, hand back a fixed sentinel "********" plus
+				// set:true so the UI can show "已保存" without leaking it.
+				if raw := s.cfg.GetRaw(sec, key); raw != "" {
+					val = "********"
+					set = true
+				}
+			} else {
 				val = s.cfg.Get(sec, key, "")
 			}
 			fields[sec][key] = map[string]any{
@@ -72,6 +80,7 @@ func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 				"value":   val,
 				"options": optsMap[dk],
 				"secret":  secMap[dk],
+				"set":     set,
 			}
 		}
 	}
@@ -135,6 +144,7 @@ func (s *Server) hGetConfigSection(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hPutConfigBulk(w http.ResponseWriter, r *http.Request) {
 	m := decodeBody(r)
 	ks := sectionKeySet()
+	secretSet := config.SecretKeys()
 	written := 0
 	for sec, v := range m {
 		secMap, ok := v.(map[string]any)
@@ -149,6 +159,14 @@ func (s *Server) hPutConfigBulk(w http.ResponseWriter, r *http.Request) {
 			if !validKeys[k] {
 				continue
 			}
+			// Secret fields: an empty value or the sentinel "********" means
+			// "keep the existing stored secret" — never overwrite it.
+			if secretSet[sec+"."+k] {
+				sv := toStrVal(val)
+				if sv == "" || sv == "********" {
+					continue
+				}
+			}
 			s.cfg.Set(sec, k, toStrVal(val))
 			written++
 		}
@@ -161,6 +179,7 @@ func (s *Server) hPutConfigSection(w http.ResponseWriter, r *http.Request) {
 	section := routeParam(r, "section")
 	m := decodeBody(r)
 	ks := sectionKeySet()
+	secretSet := config.SecretKeys()
 	validKeys, known := ks[section]
 	if !known {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "未知配置段落 [" + section + "]"})
@@ -171,6 +190,14 @@ func (s *Server) hPutConfigSection(w http.ResponseWriter, r *http.Request) {
 		if !validKeys[k] {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "[" + section + "] 不存在字段 \"" + k + "\""})
 			return
+		}
+		// Secret fields: an empty value or the sentinel "********" means
+		// "keep the existing stored secret" — never overwrite it.
+		if secretSet[section+"."+k] {
+			sv := toStrVal(val)
+			if sv == "" || sv == "********" {
+				continue
+			}
 		}
 		s.cfg.Set(section, k, toStrVal(val))
 		written++

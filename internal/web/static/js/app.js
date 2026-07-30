@@ -688,9 +688,10 @@
       const val = (curVal != null && curVal !== "") ? curVal : ((field && field.default != null) ? field.default : "");
       const id = "cfg-" + sec + "-" + k;
       if (secret) {
-        const set = (curVal != null && curVal !== "") || fv !== "";
-        const ph = set ? "（已设置，留空不改）" : "（未设置）";
-        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="password" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" data-secret="1" value="" placeholder="${esc(ph)}"></label>`;
+        const set = (curVal != null && curVal !== "") || fv !== "" || (field && field.set);
+        const ph = set ? "（已保存，留空或 ******** 表示不修改）" : "（未设置）";
+        const initVal = set ? "********" : "";
+        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="password" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" data-secret="1" value="${esc(initVal)}" placeholder="${esc(ph)}"></label>`;
       }
       if (typ === "bool") {
         const checked = ("" + val) === "True" || ("" + val) === "true" || ("" + val) === "1" ? "checked" : "";
@@ -721,7 +722,7 @@
         let v;
         if (el.type === "checkbox") v = el.checked ? "True" : "False";
         else v = el.value;
-        if (el.getAttribute("data-secret") && v === "") return; // 密码留空不改
+        if (el.getAttribute("data-secret") && (v === "" || v === "********")) return; // 密钥留空或掩码不改
         cfg[s] = cfg[s] || {}; cfg[s][k] = v;
       });
       const r = await api("PUT", "/api/config", cfg);
@@ -730,7 +731,23 @@
       if (r.ok) location.reload();
     };
     $("#cfg-reload").onclick = load;
-    $("#cfg-validate").onclick = async () => { const r = await api("POST", "/api/config/validate", {}); $("#cfg-msg").textContent = (r.data && r.data.ok) ? "校验通过" : (r.data && r.data.error) || "校验失败"; $("#cfg-msg").className = "msg " + ((r.data && r.data.ok) ? "ok" : "err"); };
+    $("#cfg-validate").onclick = async () => {
+      let firstErr = ""; let checked = 0;
+      const els = $$("#cfg-form [data-sec]");
+      for (const el of els) {
+        const s = el.getAttribute("data-sec"), k = el.getAttribute("data-key");
+        let v;
+        if (el.type === "checkbox") v = el.checked ? "True" : "False";
+        else v = el.value;
+        if (el.getAttribute("data-secret") && (v === "" || v === "********")) continue; // 密钥掩码不校验
+        const r = await api("POST", "/api/config/validate", { section: s, key: k, value: v });
+        checked++;
+        if (r.data && r.data.valid === false) { firstErr = "[" + s + "." + k + "] " + (r.data.error || "校验失败"); break; }
+      }
+      const msg = firstErr ? firstErr : (checked ? "校验通过（共 " + checked + " 项）" : "无可校验项");
+      $("#cfg-msg").textContent = msg;
+      $("#cfg-msg").className = "msg " + (firstErr ? "err" : "ok");
+    };
     load();
   }
 
