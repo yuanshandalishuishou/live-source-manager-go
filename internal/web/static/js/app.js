@@ -705,6 +705,29 @@
       const inputType = (typ === "int" || typ === "float") ? "number" : "text";
       return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="${inputType}" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" value="${esc(val)}"></label>`;
     }
+
+    function bindGithubTest() {
+      const btn = $("#cfg-github-test");
+      if (!btn) return;
+      btn.onclick = async () => {
+        const tEl = $("#cfg-GitHub-api_token");
+        const t = tEl ? tEl.value.trim() : "";
+        // 输入为掩码(已保存)或空时，不传 token，让后端用已保存的 GitHub.api_token 校验
+        const body = (t && t !== "********") ? { token: t } : {};
+        const msg = $("#cfg-github-msg");
+        msg.textContent = "测试中…"; msg.className = "msg";
+        const r = await api("POST", "/api/github/test-token", body);
+        if (!r.ok) { msg.textContent = (r.data && r.data.error) || "请求失败"; msg.className = "msg err"; return; }
+        if (r.data.valid) {
+          msg.textContent = "Token 有效（额度 " + (r.data.remaining == null ? "?" : r.data.remaining) + "/" + (r.data.limit == null ? "?" : r.data.limit) + "）";
+          msg.className = "msg ok";
+        } else {
+          msg.textContent = "Token 无效：" + (r.data.error || ("HTTP " + (r.data.status || "")));
+          msg.className = "msg err";
+        }
+      };
+    }
+
     async function load() {
       const [f, v] = await Promise.all([api("GET", "/api/config/fields"), api("GET", "/api/config")]);
       fields = f.data.fields || f.data || {}; values = v.data || {};
@@ -712,8 +735,13 @@
       $("#cfg-form").innerHTML = Object.keys(secs).map((sec) => {
         const fv = fields[sec] || {}; const vv = values[sec] || {};
         const items = Object.keys(fv).length ? fv : vv;
-        return `<div class="card"><h3>${esc(sec)}</h3>${Object.keys(items).map((k) => renderCfgField(sec, k, items[k], vv[k])).join("")}</div>`;
+        // GitHub 段追加「测试 Token」按钮，让用户填完即可就地验证
+        const extra = sec === "GitHub"
+          ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px"><button type="button" class="btn primary" id="cfg-github-test">测试 GitHub Token</button><span id="cfg-github-msg" class="msg"></span></div>`
+          : "";
+        return `<div class="card"><h3>${esc(sec)}</h3>${Object.keys(items).map((k) => renderCfgField(sec, k, items[k], vv[k])).join("")}${extra}</div>`;
       }).join("") || '<div class="muted">无配置</div>';
+      bindGithubTest();
     }
     $("#cfg-save").onclick = async () => {
       const cfg = {};
