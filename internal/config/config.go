@@ -134,7 +134,7 @@ func DefaultValues() map[string]string {
 // <select> in the UI instead of a free-text input.
 func FieldOptions() map[string][]string {
 	return map[string][]string{
-		"Network.proxy_type":             {"socks5", "http"},
+		"Network.proxy_type":            {"socks5", "http"},
 		"Testing.auto_scan_mode":        {"interval", "daily"},
 		"Testing.output_sort_by":        {"speed", "resolution", "name"},
 		"Output.group_by":               {"category", "country", "name"},

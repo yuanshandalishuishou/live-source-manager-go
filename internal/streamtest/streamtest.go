@@ -169,8 +169,21 @@ func (t *Tester) findBinary(name string) string {
 	}
 	cwd, _ := os.Getwd()
 	candidates := []string{}
+	// expand appends both the flat layout (<dir>/ffprobe[.exe]) and the official
+	// release layout (<dir>/bin/ffprobe[.exe]). BtbN / gyan.dev Windows zips and
+	// johnvansickle tarballs ship binaries under bin/, so a user who unpacks the
+	// archive verbatim into tools/ffmpeg/ would otherwise be reported as
+	// "ffprobe not found" even though the binary is right there.
+	expand := func(base string) {
+		candidates = append(candidates,
+			filepath.Join(base, name+".exe"),
+			filepath.Join(base, name),
+			filepath.Join(base, "bin", name+".exe"),
+			filepath.Join(base, "bin", name),
+		)
+	}
 	for _, d := range dirs {
-		candidates = append(candidates, filepath.Join(d, name+".exe"), filepath.Join(d, name))
+		expand(d)
 	}
 	// 2.5) derive project root from the executable path — robust against CWD.
 	// Mirrors Python's `Path(__file__).resolve().parent` resource discovery, so
@@ -181,19 +194,13 @@ func (t *Tester) findBinary(name string) string {
 			exe = ec
 		}
 		root := filepath.Dir(filepath.Dir(exe)) // .../bin/lsm.exe -> project root
-		candidates = append(candidates,
-			filepath.Join(root, "tools", "ffmpeg", name+".exe"),
-			filepath.Join(root, "tools", "ffmpeg", name),
-		)
+		expand(filepath.Join(root, "tools", "ffmpeg"))
 	}
 	// 3) project-local tools/ffmpeg (cwd + sibling Python project) then bare name
+	expand(filepath.Join(cwd, "tools", "ffmpeg"))
+	expand(filepath.Join(cwd, "..", "live-source-manager", "tools", "ffmpeg"))
+	expand("tools/ffmpeg")
 	candidates = append(candidates,
-		filepath.Join(cwd, "tools", "ffmpeg", name+".exe"),
-		filepath.Join(cwd, "tools", "ffmpeg", name),
-		filepath.Join(cwd, "..", "live-source-manager", "tools", "ffmpeg", name+".exe"),
-		filepath.Join(cwd, "..", "live-source-manager", "tools", "ffmpeg", name),
-		"tools/ffmpeg/"+name+".exe",
-		"tools/ffmpeg/"+name,
 		name+".exe",
 		name,
 	)

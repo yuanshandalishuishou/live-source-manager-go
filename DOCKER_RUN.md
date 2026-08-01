@@ -34,9 +34,9 @@ docker build --build-arg GOPROXY=https://goproxy.cn,direct -t lsm-go:latest .
 `.github/workflows/docker.yml`，自动构建并推送至 GHCR：
 
 ```
-ghcr.io/<owner>/live-source-manager-go:latest
-ghcr.io/<owner>/live-source-manager-go:master
-ghcr.io/<owner>/live-source-manager-go:sha-<commit>
+ghcr.io/yuanshandalishuishou/live-source-manager-go:latest
+ghcr.io/yuanshandalishuishou/live-source-manager-go:master
+ghcr.io/yuanshandalishuishou/live-source-manager-go:sha-<commit>
 ```
 
 推送成功后自动将包设为 **public**（他人无需登录即可 `docker pull`）。
@@ -45,7 +45,7 @@ GitHub Runner 在境外，工作流会自动将构建期 Go 代理改回官方�
 
 ```bash
 # 拉取（public）
-docker pull ghcr.io/<owner>/live-source-manager-go:latest
+docker pull ghcr.io/yuanshandalishuishou/live-source-manager-go:latest
 ```
 
 ---
