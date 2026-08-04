@@ -18,6 +18,7 @@ tools/ffmpeg/*.dll
 /data/
 /log/
 /www/output/
+/internal/web/www/
 /config/online/
 /config/sources/
 
@@ -40,3 +41,6 @@ Thumbs.db
 
 # 文档预览（非源码）
 *.pdf
+
+# 本机 safe-delete 守卫暂留的临时诊断文件（绝不可入库）
+_rm_result.txt

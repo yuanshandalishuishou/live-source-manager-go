@@ -189,6 +189,10 @@ CREATE INDEX IF NOT EXISTS idx_github_dl_repo ON github_download_cache(repo_key)
 			logger.L().Info("默认分类规则已初始化")
 		}
 	}
+	// EPG（电子节目单）三表 + 频道映射扩列 + 预置源种子。
+	if err := migrateEPG(conn); err != nil {
+		return err
+	}
 	return nil
 }
 

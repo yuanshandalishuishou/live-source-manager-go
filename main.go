@@ -20,6 +20,7 @@ import (
 
 	"live-source-manager-go/internal/config"
 	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/epg"
 	"live-source-manager-go/internal/logger"
 	"live-source-manager-go/internal/manager"
 	"live-source-manager-go/internal/rules"
@@ -122,7 +123,28 @@ func main() {
 	// Build pipeline manager + web router.
 	mgr := manager.New(conn, cfg)
 	mgr.StartScheduler(context.Background())
-	router := web.NewRouter(conn, cfg, mgr)
+
+	// EPG 管理器（与 Python 版对齐：抓取外部 XMLTV → 频道对齐 → 注入 m3u + 生成 epg.xml.gz）。
+	em := epg.New(conn, cfg)
+	// NamesProvider 提供当前已采集到的本地频道名，用于 EPG 频道自动对齐；
+	// 冷缓存（未采集）时返回 nil，由 epg.MatchChannels 回落到 channel_name_mapping 表。
+	em.NamesProvider = func() []string {
+		chs, _, ok := mgr.PeekChannels()
+		if !ok || len(chs) == 0 {
+			return nil
+		}
+		names := make([]string, 0, len(chs))
+		for _, c := range chs {
+			names = append(names, c.Name)
+		}
+		return names
+	}
+
+	router := web.NewRouter(conn, cfg, mgr, em)
+
+	// EPG 常驻调度：每分钟巡检启用源的刷新计划，到点触发增量刷新。
+	epgCtx, epgCancel := context.WithCancel(context.Background())
+	go newEPGScheduler(em, conn, filepath.Join(absDir, "data", "status")).run(epgCtx)
 
 	// File-share server (static M3U output).
 	go func() {
@@ -154,6 +176,7 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	log.Info("正在关闭服务…")
+	epgCancel()
 	mgr.StopScheduler()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -19,6 +19,7 @@ import (
 	"live-source-manager-go/internal/auth"
 	"live-source-manager-go/internal/config"
 	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/epg"
 	"live-source-manager-go/internal/logger"
 	"live-source-manager-go/internal/manager"
 	"live-source-manager-go/internal/rules"
@@ -40,6 +41,7 @@ type Server struct {
 	cfg    *config.Config
 	mgr    *manager.Manager
 	eng    *rules.Engine
+	epgMgr *epg.Manager
 	tmpl   map[string]*template.Template
 	routes []routeEntry
 	csrf   sync.Map // sessionID -> csrf token
@@ -64,16 +66,17 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 // NewRouter builds the full HTTP handler for the web UI.
-func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager) http.Handler {
+func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager, epgMgr *epg.Manager) http.Handler {
 	s := &Server{
-		conn: conn,
-		cfg:  cfg,
-		mgr:  mgr,
-		eng:  rules.NewEngine(conn),
-		tmpl: map[string]*template.Template{},
+		conn:   conn,
+		cfg:    cfg,
+		mgr:    mgr,
+		eng:    rules.NewEngine(conn),
+		epgMgr: epgMgr,
+		tmpl:   map[string]*template.Template{},
 	}
 
-	pages := []string{"dashboard", "sources", "rules", "config", "system", "logs", "audit", "users", "login", "test"}
+	pages := []string{"dashboard", "sources", "rules", "config", "system", "test", "epg", "epg_sources", "logs", "audit", "users", "login"}
 	for _, p := range pages {
 		t, err := template.New("base").ParseFS(templateFS, "templates/base.html", "templates/"+p+".html")
 		if err != nil {
@@ -96,6 +99,8 @@ func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager) http.Hand
 	s.route("GET", "/audit", s.pageAudit, true)
 	s.route("GET", "/users", s.pageUsers, true)
 	s.route("GET", "/test", s.pageTest, true)
+	s.route("GET", "/epg", s.pageEpg, true)
+	s.route("GET", "/epg/sources", s.pageEpgSources, true)
 
 	// ── Health / auth ──────────────────────────────────────────────────────
 	s.route("GET", "/api/health", s.hHealth, false)
@@ -197,6 +202,21 @@ func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager) http.Hand
 	s.route("POST", "/api/test/cancel", s.hTestCancel, true)
 	s.route("GET", "/api/test/status", s.hTestStatus, true)
 	s.route("GET", "/api/test/stream", s.hTestStream, true)
+
+	// ── EPG（电子节目单） ───────────────────────────────────────────────────
+	s.route("GET", "/api/epg/sources", s.hListEPGSources, true)
+	s.route("POST", "/api/epg/sources", s.hCreateEPGSource, true)
+	s.route("PUT", "/api/epg/sources/{source_id}", s.hUpdateEPGSource, true)
+	s.route("DELETE", "/api/epg/sources/{source_id}", s.hDeleteEPGSource, true)
+	s.route("POST", "/api/epg/sources/{source_id}/refresh", s.hRefreshEPGSource, true)
+	s.route("POST", "/api/epg/refresh-all", s.hRefreshAllEPG, true)
+	s.route("POST", "/api/epg/generate", s.hGenerateEPG, true)
+	s.route("GET", "/api/epg/grid", s.hEPGGrid, true)
+	s.route("GET", "/api/epg/channels", s.hListEPGChannels, true)
+	s.route("GET", "/api/epg/now", s.hEPGNowNext, true)
+	s.route("POST", "/api/epg/channels/{channel_id}/match", s.hMatchEPGChannel, true)
+	s.route("GET", "/api/epg/status", s.hEPGStatus, true)
+	s.route("GET", "/api/epg/url", s.hEPGURL, true)
 
 	return s
 }

@@ -1,0 +1,81 @@
+{{define "content"}}
+<div class="page" id="page-epg">
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <div id="epg-status-info" class="muted" style="font-size:13px;flex:1"></div>
+    {{if .IsAdmin}}
+    <button class="btn primary" id="btn-refresh-all">⟳ 全量刷新</button>
+    <button class="btn" id="btn-generate">⤓ 生成 epg.xml.gz</button>
+    {{end}}
+    <button class="btn" id="btn-copy-url">⧉ 复制节目单链接</button>
+    <a class="btn" href="/epg/sources">源管理 →</a>
+  </div>
+
+  <!-- 统计卡 -->
+  <div class="cards-row" id="epg-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+    <div class="card stat"><div class="stat-num" id="st-sources">–</div><div class="stat-label">启用源</div></div>
+    <div class="card stat"><div class="stat-num" id="st-channels">–</div><div class="stat-label">EPG 频道</div></div>
+    <div class="card stat"><div class="stat-num" id="st-programmes">–</div><div class="stat-label">节目数</div></div>
+    <div class="card stat"><div class="stat-num" id="st-matched">–</div><div class="stat-label">已对齐</div></div>
+    <div class="card stat"><div class="stat-num" id="st-last">–</div><div class="stat-label">最近刷新</div></div>
+  </div>
+
+  <!-- 网格筛选 -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px" id="day-tabs">
+        <button class="btn day-tab active" data-day="0">今天</button>
+        <button class="btn day-tab" data-day="1">明天</button>
+        <button class="btn day-tab" data-day="2">后天</button>
+        <button class="btn day-tab" data-day="3">大后天</button>
+      </div>
+      <input type="text" id="epg-search" class="input" style="min-width:240px;max-width:320px;font-size:13px" placeholder="搜索频道名 / tvg-id…">
+    </div>
+    <div id="epg-grid" style="display:flex;flex-direction:column;gap:10px">
+      <div class="muted" style="text-align:center;padding:24px">加载中…</div>
+    </div>
+    <div id="epg-running" class="muted" style="text-align:center;padding:10px;display:none"></div>
+  </div>
+</div>
+
+<!-- 频道对齐 Modal -->
+<div id="match-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="match-backdrop"></div>
+  <div class="modal-content" style="min-width:420px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0">对齐本地频道</h3>
+      <button class="btn" id="match-close" style="padding:4px 12px">×</button>
+    </div>
+    <div class="muted" id="match-channel-name" style="font-size:13px;margin-bottom:8px"></div>
+    <label class="lbl">本地频道名（与 M3U 中一致）</label>
+    <input type="text" id="match-input" class="input" style="min-width:100%" placeholder="如：CCTV-1 综合">
+    <div id="match-result"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" id="match-clear">清除对齐</button>
+      <button class="btn" id="match-cancel">取消</button>
+      <button class="btn primary" id="match-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.cards-row .card.stat { flex:1; min-width:120px; padding:14px 16px; }
+.stat-num { font-size:24px; font-weight:700; color:var(--primary); }
+.stat-label { font-size:12px; color:var(--text-dim); margin-top:2px; }
+.day-tab.active { background:var(--primary); border-color:var(--primary); color:#fff; }
+.epg-row { display:flex; gap:14px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-soft); }
+.epg-row .ch { min-width:180px; max-width:240px; flex-shrink:0; }
+.epg-row .ch .ch-name { font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; }
+.epg-row .ch .ch-icon { width:22px; height:22px; border-radius:5px; object-fit:contain; background:#fff2; }
+.epg-row .ch .ch-match { font-size:12px; color:var(--text-dim); margin-top:4px; }
+.epg-row .ch .ch-match b { color:var(--success); font-weight:600; }
+.epg-row .progs { flex:1; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.prog { display:flex; gap:10px; font-size:13px; align-items:baseline; }
+.prog .pt { color:var(--text-dim); font-variant-numeric:tabular-nums; min-width:96px; }
+.prog .pt .pend { color:var(--text-dim); }
+.prog .ptitle { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.prog.now { background:rgba(91,140,255,.12); border-radius:6px; padding:2px 6px; margin:0 -6px; }
+.prog.now .ptitle { color:var(--primary); font-weight:600; }
+.match-link { cursor:pointer; text-decoration:underline dotted; }
+</style>
+{{end}}

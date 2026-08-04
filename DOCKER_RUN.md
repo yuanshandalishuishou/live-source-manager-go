@@ -30,7 +30,7 @@ docker build --build-arg GOPROXY=https://goproxy.cn,direct -t lsm-go:latest .
 
 ### GitHub Actions 自动构建（GHCR）
 
-推送到 `master` 分支（且涉及 Docker 相关文件）或手动 `workflow_dispatch` 会触发
+推送到 `master` / `main` 分支（任意文件变更即触发，无 paths 过滤）或手动 `workflow_dispatch` 会触发
 `.github/workflows/docker.yml`，自动构建并推送至 GHCR：
 
 ```
@@ -151,8 +151,11 @@ docker run -d --name lsm-go \
 
 ## 七、ffmpeg / ffprobe（可选）
 
-镜像构建期会尽力下载静态 ffmpeg/ffprobe 到 `/usr/local/bin`。若下载失败仅告警跳过，
-**流媒体探测功能受限，但 Web / SQLite / 文件发布服务可正常启动**（与 Python 版一致）。
+镜像通过 Debian 官方仓库 `apt-get install ffmpeg` 安装（见 `Dockerfile` 运行阶段 `apt-get install ... ffmpeg`），
+安装失败将**直接令镜像构建失败**（无静默跳过），因此生产镜像必定自带 ffmpeg/ffprobe
+（位于 `/usr/bin`，已在 `PATH` 内）。为兼容程序「项目内 `tools/ffmpeg` 目录」查找逻辑，
+并方便挂载宿主二进制，镜像内额外软链 `/app/tools/ffmpeg/{ffmpeg,ffprobe} -> /usr/bin`。
+（与早期「从 GitHub 下载静态包、失败仅告警跳过」的方案不同：构建期更稳定，且不再有「探测功能缺失」的坑。）
 
 宿主机已装 ffmpeg 时，也可在 `docker run` 时挂载复用：
 

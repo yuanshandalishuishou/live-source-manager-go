@@ -1,0 +1,101 @@
+{{define "content"}}
+<div class="page" id="page-epg-sources">
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <div id="src-status-info" class="muted" style="font-size:13px;flex:1"></div>
+    {{if .IsAdmin}}
+    <button class="btn primary" id="btn-add-source">+ 新增节目单源</button>
+    <button class="btn" id="btn-refresh-all">⟳ 全量刷新</button>
+    <button class="btn" id="btn-generate">⤓ 生成 epg.xml.gz</button>
+    {{end}}
+    <button class="btn" id="btn-refresh">刷新</button>
+  </div>
+
+  <div class="card">
+    <h3>节目单源</h3>
+    <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="only-enabled"> 仅显示启用
+      </label>
+      <input type="text" id="src-search" class="input" style="min-width:220px;max-width:300px;font-size:13px" placeholder="搜索名称 / 地址…">
+    </div>
+    <div style="overflow-x:auto">
+      <table class="data-table" id="epg-sources-table">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>地址</th>
+            <th>启用</th>
+            <th>优先级</th>
+            <th>刷新</th>
+            <th>状态</th>
+            <th>频道/节目</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="epg-sources-tbody">
+          <tr><td colspan="8" class="muted" style="text-align:center;padding:18px">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 新增/编辑 Modal -->
+<div id="src-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="src-backdrop"></div>
+  <div class="modal-content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="src-modal-title" style="margin:0">新增节目单源</h3>
+      <button class="btn" id="src-close" style="padding:4px 12px">×</button>
+    </div>
+    <input type="hidden" id="src-id">
+    <label class="lbl">名称</label>
+    <input type="text" id="src-name" class="input" style="min-width:100%" placeholder="如：51zmt 大陆+港澳台">
+    <label class="lbl">XMLTV 地址（url）</label>
+    <input type="text" id="src-url" class="input" style="min-width:100%" placeholder="https://example.com/epg.xml.gz">
+    <div style="display:flex;gap:12px;margin-top:10px">
+      <label style="font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="src-enabled"> 启用
+      </label>
+      <div style="flex:1">
+        <label class="lbl">优先级（越小越先）</label>
+        <input type="number" id="src-priority" class="input" style="min-width:100%" value="100">
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:10px">
+      <div style="flex:1">
+        <label class="lbl">刷新模式</label>
+        <select id="src-mode" class="input" style="min-width:100%">
+          <option value="">跟随全局</option>
+          <option value="daily">daily（每日定时）</option>
+          <option value="interval">interval（间隔）</option>
+        </select>
+      </div>
+      <div style="flex:1">
+        <label class="lbl">刷新时刻 (HH:MM)</label>
+        <input type="text" id="src-at" class="input" style="min-width:100%" placeholder="03:30">
+      </div>
+      <div style="flex:1">
+        <label class="lbl">间隔(分钟)</label>
+        <input type="number" id="src-minutes" class="input" style="min-width:100%" value="360">
+      </div>
+    </div>
+    <label class="lbl">备注</label>
+    <input type="text" id="src-remark" class="input" style="min-width:100%">
+    <div id="src-result"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" id="src-cancel">取消</button>
+      <button class="btn primary" id="src-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.url-cell { max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.switch { cursor:pointer; }
+.badge.ok { background:rgba(80,200,120,.18); color:var(--success); }
+.badge.fail { background:rgba(255,90,90,.18); color:var(--danger); }
+.badge.warn { background:rgba(255,180,84,.18); color:var(--warn); }
+</style>
+{{end}}

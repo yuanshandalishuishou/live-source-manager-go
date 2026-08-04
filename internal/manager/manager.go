@@ -15,6 +15,8 @@ import (
 
 	"live-source-manager-go/internal/auth"
 	"live-source-manager-go/internal/config"
+	"live-source-manager-go/internal/db"
+	"live-source-manager-go/internal/epg"
 	"live-source-manager-go/internal/logger"
 	"live-source-manager-go/internal/m3u"
 	"live-source-manager-go/internal/rules"
@@ -650,7 +652,26 @@ func (m *Manager) buildCollectOpts() source.CollectOptions {
 func (m *Manager) buildM3UOpts() m3u.Options {
 	op := m.cfg.GetOutputParams()
 	fp := m.cfg.GetFilterParams()
+	// EPG：只有总开关与注入开关同时为 True 才注入 url-tvg，且外链必须真的算得出来，
+	// 否则宁可不注入，也不给播放器一条死链。
+	epgURL := ""
+	var tvgInfo map[string][2]string
+	em := epg.New(m.conn, m.cfg)
+	if em.InjectEnabled() {
+		if u := em.GetEPGURL(); u != "" {
+			epgURL = u
+		} else {
+			logger.L().Info("EPG 已启用但无法推导外链地址，跳过 url-tvg 注入")
+		}
+	}
+	if em.Enabled() {
+		if info, err := db.GetAllChannelTVGInfo(m.conn); err == nil && len(info) > 0 {
+			tvgInfo = info
+		}
+	}
 	return m3u.Options{
+		EPGURL:             epgURL,
+		TVGInfo:            tvgInfo,
 		Filename:           toStr(op["filename"]),
 		OutputDir:          toStr(op["output_dir"]),
 		GroupBy:            toStr(op["group_by"]),

@@ -34,6 +34,12 @@ type Options struct {
 	UAPosition         string         // "extinf" (attr) | "url" (|User-Agent= suffix)
 	RefererEnabled     bool           // inject ch.Referrer into output (Referrers.referer_enabled)
 	RefererPosition    string         // "extinf" (attr) | "url" (|Referer= suffix)
+	// EPGURL 非空时会在 #EXTM3U 头注入 url-tvg / x-tvg-url。调用方必须已经确认
+	// EPG 总开关与注入开关都为 True，否则播放器会拿到一条死链。
+	EPGURL string
+	// TVGInfo 是 频道名 → [tvg_id, tvg_logo]，来自 EPG 频道对齐结果。
+	// 命中时优先于按频道名生成的兜底 tvg-id，让播放器能正确挂上节目单。
+	TVGInfo map[string][2]string
 }
 
 // nonAlphaNum matches characters that are not safe inside a tvg-id attribute.
@@ -44,7 +50,7 @@ func Generate(channels []types.Channel, opts Options) (string, error) {
 	kept := filterChannels(channels, opts)
 	kept = applyMaxPerChannel(kept, opts)
 
-	lines := []string{"#EXTM3U"}
+	lines := []string{buildHeader(opts)}
 
 	if opts.GroupBy == "" || opts.GroupBy == "none" {
 		// Flat output: no #EXTGRP headers, empty group-title.
@@ -267,17 +273,39 @@ func sortChannels(chs []types.Channel, sortBy string) {
 // EXTINF building (ports build_enhanced_extinf at base level)
 // ────────────────────────────────────────────────────────────
 
+// buildHeader 构造 #EXTM3U 头。EPGURL 非空时注入 url-tvg / x-tvg-url，
+// 双属性并写是为了兼容不同播放器（DIYP 认 x-tvg-url，Kodi/TiviMate 认 url-tvg）。
+func buildHeader(opts Options) string {
+	epgURL := strings.TrimSpace(opts.EPGURL)
+	if epgURL == "" {
+		return "#EXTM3U"
+	}
+	// 属性值内的引号会截断整行，直接剥掉。
+	epgURL = strings.ReplaceAll(epgURL, `"`, "")
+	return fmt.Sprintf(`#EXTM3U url-tvg="%s" x-tvg-url="%s"`, epgURL, epgURL)
+}
+
 func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 	name := c.Name
 	if name == "" {
 		name = "Unknown"
 	}
 	parts := []string{"#EXTINF:-1"}
+	// tvg-id 优先用 EPG 对齐结果，未命中才回落到按频道名生成的占位 id。
 	tvgID := strings.ToLower(nonAlphaNum.ReplaceAllString(name, "_"))
+	logo := c.Logo
+	if info, ok := opts.TVGInfo[name]; ok {
+		if info[0] != "" {
+			tvgID = info[0]
+		}
+		if logo == "" && info[1] != "" {
+			logo = info[1]
+		}
+	}
 	parts = append(parts, fmt.Sprintf(`tvg-id="%s"`, tvgID))
 	parts = append(parts, fmt.Sprintf(`tvg-name="%s"`, name))
-	if c.Logo != "" {
-		parts = append(parts, fmt.Sprintf(`tvg-logo="%s"`, c.Logo))
+	if logo != "" {
+		parts = append(parts, fmt.Sprintf(`tvg-logo="%s"`, logo))
 	}
 	parts = append(parts, fmt.Sprintf(`group-title="%s"`, groupTitle))
 

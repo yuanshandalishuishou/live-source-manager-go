@@ -127,6 +127,20 @@ func DefaultValues() map[string]string {
 		// [Referrers]
 		"Referrers.referer_enabled":  "True",
 		"Referrers.referer_position": "extinf",
+		// [EPG] 电子节目单。默认全开：总开关与注入开关同时为 True，
+		// 避免出现「抓了节目单却不注入」或「注入了 url-tvg 却是死链」的割裂状态。
+		"EPG.enabled":         "True",
+		"EPG.inject_into_m3u": "True",
+		"EPG.output_filename": "epg.xml.gz",
+		"EPG.refresh_mode":    "daily",
+		"EPG.refresh_at":      "03:30",
+		"EPG.refresh_minutes": "360",
+		"EPG.timezone":        "Asia/Shanghai",
+		"EPG.keep_days":       "7",
+		"EPG.past_hours":      "6",
+		"EPG.fetch_timeout":   "60",
+		"EPG.max_concurrent":  "3",
+		"EPG.web_base_url":    "",
 	}
 }
 
@@ -144,6 +158,7 @@ func FieldOptions() map[string][]string {
 		"UserAgents.ua_position":        {"extinf", "url"},
 		"Referrers.referer_position":    {"extinf", "url"},
 		"Logging.level":                 {"DEBUG", "INFO", "WARNING", "ERROR"},
+		"EPG.refresh_mode":              {"daily", "interval", "manual"},
 	}
 }
 

@@ -1162,13 +1162,279 @@
   }
 
   // ── boot ─────────────────────────────────────────────────────
+  // ── EPG 节目单网格 ────────────────────────────────────────────
+  let _epgRows = [], _epgDay = 0, _epgKeyword = "", _epgTimer = null, _epgLastUrl = "", _epgRunTimer = null;
+  function utcDate(s) {
+    const m = (s || "").match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+    if (!m) return null;
+    return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  }
+  function fmtClock(utc) {
+    const d = utcDate(utc);
+    if (!d) return "";
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+  }
+  async function initEpg() {
+    const IS_ADMIN = !!$("#btn-refresh-all");
+    async function loadStatus() {
+      const r = await api("GET", "/api/epg/status");
+      const d = r.data || {};
+      const cfg = d.config || {};
+      const st = d.stats || {};
+      setText("#st-sources", (st.enabled_sources || 0) + " / " + (st.source_count || 0));
+      setText("#st-channels", st.channel_count || 0);
+      setText("#st-programmes", st.programme_count || 0);
+      setText("#st-matched", st.matched_channels || 0);
+      setText("#st-last", d.last_refresh ? d.last_refresh.replace("T", " ").slice(0, 16) : "—");
+      _epgLastUrl = d.url || "";
+      const info = $("#epg-status-info");
+      if (info) {
+        const en = cfg.enabled ? '<span style="color:var(--success)">已启用</span>' : '<span style="color:var(--danger)">已停用</span>';
+        const inj = cfg.inject_into_m3u ? "是" : "否";
+        let link = _epgLastUrl ? '<a href="' + esc(_epgLastUrl) + '" target="_blank" style="color:var(--primary)">' + esc(_epgLastUrl) + "</a>" : "（未生成）";
+        info.innerHTML = "EPG " + en + " · 注入 M3U：" + inj + " · 链接：" + link;
+      }
+      const run = $("#epg-running");
+      if (d.running) {
+        if (run) { run.style.display = ""; run.textContent = "刷新中：" + (d.message || ""); }
+        if (!_epgRunTimer) _epgRunTimer = setInterval(pollStatus, 3000);
+      } else if (run) {
+        run.style.display = "none";
+        if (_epgRunTimer) { clearInterval(_epgRunTimer); _epgRunTimer = null; }
+      }
+    }
+    async function pollStatus() {
+      await loadStatus();
+      if (!_epgRunTimer) await loadGrid(); // 刷新结束，重载网格
+    }
+    function renderRow(row) {
+      const now = new Date();
+      const progs = (row.programmes || []).map((p) => {
+        const st = utcDate(p.start_utc), sp = utcDate(p.stop_utc);
+        const isNow = st && sp && st <= now && now < sp;
+        return '<div class="prog' + (isNow ? " now" : "") + '"><span class="pt">' + fmtClock(p.start_utc) +
+          "–" + fmtClock(p.stop_utc) + '</span><span class="ptitle">' + esc(p.title || "（无标题）") + "</span></div>";
+      }).join("");
+      const icon = row.icon ? '<img class="ch-icon" src="' + esc(row.icon) + '" onerror="this.style.display=\'none\'">' : "";
+      const match = row.matched_channel
+        ? '对齐：<b>' + esc(row.matched_channel) + "</b>"
+        : (IS_ADMIN ? '<span class="match-link" data-id="' + row.tvg_id + '">点击对齐</span>' : "未对齐");
+      return '<div class="epg-row"><div class="ch"><div class="ch-name">' + icon + esc(row.display_name || row.tvg_id) +
+        '</div><div class="ch-match">' + match + '</div></div><div class="progs">' +
+        (progs || '<div class="muted">无节目数据</div>') + "</div></div>";
+    }
+    async function loadGrid() {
+      const r = await api("GET", "/api/epg/grid?day=" + _epgDay + "&keyword=" + encodeURIComponent(_epgKeyword) + "&limit=80");
+      const box = $("#epg-grid");
+      if (!box) return;
+      const rows = (r.data && r.data.rows) || [];
+      _epgRows = rows;
+      if (!rows.length) { box.innerHTML = '<div class="muted" style="text-align:center;padding:24px">暂无节目单数据，请先到「源管理」刷新节目单源。</div>'; return; }
+      box.innerHTML = rows.map(renderRow).join("");
+      $$(".match-link", box).forEach((el) => {
+        el.onclick = () => openMatch(el.getAttribute("data-id"));
+      });
+    }
+    // 频道对齐 Modal
+    let _matchTvg = "";
+    function openMatch(tvgId) {
+      _matchTvg = tvgId;
+      const row = _epgRows.find((x) => x.tvg_id === tvgId);
+      $("#match-channel-name").textContent = row ? (row.display_name || tvgId) : tvgId;
+      $("#match-input").value = "";
+      $("#match-result").innerHTML = "";
+      $("#match-modal").style.display = "flex";
+    }
+    $("#match-close").onclick = $("#match-cancel").onclick = () => ($("#match-modal").style.display = "none");
+    $("#match-backdrop").onclick = () => ($("#match-modal").style.display = "none");
+    $("#match-save").onclick = async () => {
+      const v = $("#match-input").value.trim();
+      const r = await api("POST", "/api/epg/channels/" + encodeURIComponent(_matchTvg) + "/match", { matched_channel: v, tvg_id: _matchTvg });
+      if (r.ok && r.data.ok) { $("#match-modal").style.display = "none"; toast("已保存对齐", "success"); loadGrid(); }
+      else $("#match-result").innerHTML = '<div class="msg err">' + esc(r.data.error || "保存失败") + "</div>";
+    };
+    $("#match-clear").onclick = async () => {
+      const r = await api("POST", "/api/epg/channels/" + encodeURIComponent(_matchTvg) + "/match", { matched_channel: "", tvg_id: _matchTvg });
+      if (r.ok && r.data.ok) { $("#match-modal").style.display = "none"; toast("已清除对齐"); loadGrid(); }
+    };
+    // 工具栏
+    $$(".day-tab").forEach((b) => b.onclick = () => {
+      $$(".day-tab").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      _epgDay = parseInt(b.getAttribute("data-day"), 10) || 0;
+      loadGrid();
+    });
+    let _t = null;
+    $("#epg-search").oninput = () => {
+      clearTimeout(_t);
+      _t = setTimeout(() => { _epgKeyword = $("#epg-search").value.trim(); loadGrid(); }, 400);
+    };
+    if (IS_ADMIN) {
+      $("#btn-refresh-all").onclick = async () => {
+        const r = await api("POST", "/api/epg/refresh-all");
+        toast(r.data.message || "已触发刷新", r.ok ? "success" : "error");
+        loadStatus();
+      };
+      $("#btn-generate").onclick = async () => {
+        const r = await api("POST", "/api/epg/generate");
+        if (r.ok && r.data.ok) toast("已生成：" + r.data.path, "success");
+        else toast(r.data.error || "生成失败", "error");
+        loadStatus();
+      };
+    }
+    $("#btn-copy-url").onclick = async () => {
+      if (!_epgLastUrl) { toast("暂无节目单链接", "error"); return; }
+      try { await navigator.clipboard.writeText(_epgLastUrl); toast("已复制链接", "success"); }
+      catch (e) { toast(_epgLastUrl, "success"); }
+    };
+    await loadStatus();
+    await loadGrid();
+  }
+
+  // ── EPG 源管理 ───────────────────────────────────────────────
+  let _srcAll = [], _srcTimer = null;
+  async function initEpgSources() {
+    const IS_ADMIN = !!$("#btn-add-source");
+    async function loadSources() {
+      const r = await api("GET", "/api/epg/sources");
+      _srcAll = (r.data && r.data.sources) || [];
+      renderSources();
+    }
+    function renderSources() {
+      const onlyEn = $("#only-enabled") && $("#only-enabled").checked;
+      const kw = ($("#src-search").value || "").trim().toLowerCase();
+      const rows = _srcAll.filter((s) => {
+        if (onlyEn && !s.enabled) return false;
+        if (kw && !(String(s.name).toLowerCase().includes(kw) || String(s.url).toLowerCase().includes(kw))) return false;
+        return true;
+      });
+      const tb = $("#epg-sources-tbody");
+      if (!tb) return;
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted" style="text-align:center;padding:18px">没有匹配的节目单源</td></tr>'; return; }
+      tb.innerHTML = rows.map((s) => {
+        const stt = s.last_status === "success"
+          ? '<span class="badge ok">成功</span>'
+          : s.last_status === "failed"
+          ? '<span class="badge fail" title="' + esc(s.last_error || "") + '">失败</span>'
+          : '<span class="badge warn">未抓取</span>';
+        const refresh = [s.refresh_mode || "全局", s.refresh_mode === "interval" ? (s.refresh_minutes || 0) + "分" : (s.refresh_at || "")].filter(Boolean).join(" / ");
+        const actions = [
+          IS_ADMIN ? '<button class="btn sm" data-act="refresh" data-id="' + s.id + '">刷新</button>' : "",
+          IS_ADMIN ? '<button class="btn sm" data-act="edit" data-id="' + s.id + '">编辑</button>' : "",
+          IS_ADMIN ? '<button class="btn sm danger" data-act="del" data-id="' + s.id + '">删除</button>' : "",
+        ].join(" ");
+        return '<tr>' +
+          "<td>" + esc(s.name) + "</td>" +
+          '<td class="url-cell" title="' + esc(s.url) + '">' + esc(s.url) + "</td>" +
+          "<td>" + (IS_ADMIN
+            ? '<input type="checkbox" class="switch" data-act="toggle" data-id="' + s.id + '"' + (s.enabled ? " checked" : "") + ">"
+            : (s.enabled ? "是" : "否")) + "</td>" +
+          "<td>" + (s.priority || 0) + "</td>" +
+          "<td>" + esc(refresh) + "</td>" +
+          "<td>" + stt + (s.last_fetch_at ? '<br><span class="muted" style="font-size:11px">' + esc(s.last_fetch_at) + "</span>" : "") + "</td>" +
+          "<td>" + (s.last_channel_count || 0) + " / " + (s.last_programme_count || 0) + "</td>" +
+          "<td>" + actions + "</td>" +
+          "</tr>";
+      }).join("");
+      $$("button[data-act]", tb).forEach((b) => {
+        b.onclick = () => {
+          const id = b.getAttribute("data-id");
+          const act = b.getAttribute("data-act");
+          if (act === "refresh") doRefresh(id);
+          else if (act === "edit") openModal(id);
+          else if (act === "del") doDelete(id);
+          else if (act === "toggle") doToggle(id, b.checked);
+        };
+      });
+    }
+    async function doRefresh(id) {
+      const r = await api("POST", "/api/epg/sources/" + id + "/refresh");
+      toast(r.data.message || "已触发刷新", r.ok ? "success" : "error");
+      startPoll();
+    }
+    async function doToggle(id, on) {
+      const src = _srcAll.find((x) => x.id == id);
+      if (!src) return;
+      const upd = Object.assign({}, src, { enabled: on });
+      const r = await api("PUT", "/api/epg/sources/" + id, upd);
+      if (!(r.ok && r.data.ok)) { toast(r.data.error || "更新失败", "error"); loadSources(); }
+    }
+    async function doDelete(id) {
+      if (!confirm("确认删除该节目单源及其全部频道/节目数据？")) return;
+      const r = await api("DELETE", "/api/epg/sources/" + id);
+      if (r.ok && r.data.ok) { toast("已删除", "success"); loadSources(); }
+      else toast(r.data.error || "删除失败", "error");
+    }
+    function startPoll() {
+      if (_srcTimer) return;
+      _srcTimer = setInterval(async () => {
+        const r = await api("GET", "/api/epg/status");
+        if (!(r.data && r.data.running)) { clearInterval(_srcTimer); _srcTimer = null; loadSources(); }
+      }, 3000);
+    }
+    // Modal
+    function openModal(id) {
+      const s = id ? _srcAll.find((x) => x.id == id) : null;
+      $("#src-modal-title").textContent = s ? "编辑节目单源" : "新增节目单源";
+      $("#src-id").value = s ? s.id : "";
+      $("#src-name").value = s ? s.name : "";
+      $("#src-url").value = s ? s.url : "";
+      $("#src-enabled").checked = s ? !!s.enabled : true;
+      $("#src-priority").value = s ? (s.priority || 100) : 100;
+      $("#src-mode").value = s ? (s.refresh_mode || "") : "";
+      $("#src-at").value = s ? (s.refresh_at || "") : "";
+      $("#src-minutes").value = s ? (s.refresh_minutes || 360) : 360;
+      $("#src-remark").value = s ? (s.remark || "") : "";
+      $("#src-result").innerHTML = "";
+      $("#src-modal").style.display = "flex";
+    }
+    $("#src-close").onclick = $("#src-cancel").onclick = () => ($("#src-modal").style.display = "none");
+    $("#src-backdrop").onclick = () => ($("#src-modal").style.display = "none");
+    if (IS_ADMIN) {
+      $("#btn-add-source").onclick = () => openModal(null);
+      $("#src-save").onclick = async () => {
+        const id = $("#src-id").value;
+        const body = {
+          name: $("#src-name").value.trim(),
+          url: $("#src-url").value.trim(),
+          enabled: $("#src-enabled").checked,
+          priority: parseInt($("#src-priority").value, 10) || 100,
+          refresh_mode: $("#src-mode").value,
+          refresh_at: $("#src-at").value.trim(),
+          refresh_minutes: parseInt($("#src-minutes").value, 10) || 0,
+          remark: $("#src-remark").value.trim(),
+        };
+        if (!body.url) { $("#src-result").innerHTML = '<div class="msg err">地址不能为空</div>'; return; }
+        const r = id
+          ? await api("PUT", "/api/epg/sources/" + id, body)
+          : await api("POST", "/api/epg/sources", body);
+        if (r.ok && r.data.ok) { $("#src-modal").style.display = "none"; toast("已保存", "success"); loadSources(); }
+        else $("#src-result").innerHTML = '<div class="msg err">' + esc(r.data.error || "保存失败") + "</div>";
+      };
+      $("#btn-refresh-all").onclick = async () => {
+        const r = await api("POST", "/api/epg/refresh-all");
+        toast(r.data.message || "已触发刷新", r.ok ? "success" : "error");
+        startPoll();
+      };
+      $("#btn-generate").onclick = async () => {
+        const r = await api("POST", "/api/epg/generate");
+        if (r.ok && r.data.ok) toast("已生成：" + r.data.path, "success");
+        else toast(r.data.error || "生成失败", "error");
+      };
+    }
+    if ($("#only-enabled")) $("#only-enabled").onchange = renderSources;
+    if ($("#src-search")) $("#src-search").oninput = renderSources;
+    await loadSources();
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     initTheme(); markNav();
     const p = location.pathname;
     if (p === "/login") return initLogin();
     initDashboard._ = 1;
     const map = { "/": initDashboard, "/sources": initSources, "/rules": initRules, "/config": initConfig,
-      "/system": initSystem, "/logs": initLogs, "/audit": initLogs, "/users": initUsers, "/test": initTest };
+      "/system": initSystem, "/logs": initLogs, "/audit": initLogs, "/users": initUsers, "/test": initTest,
+      "/epg": initEpg, "/epg/sources": initEpgSources };
     (map[p] || initDashboard)();
   });
 })();

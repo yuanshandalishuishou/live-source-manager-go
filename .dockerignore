@@ -13,6 +13,10 @@
 .workbuddy/
 .github/
 .zread/
+# 本地环境 / 密钥（绝不可进入构建上下文）
+.env
+*.env
+*.env.local
 
 # ===== 编译产物 / 运行期二进制 =====
 bin/
