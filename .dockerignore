@@ -56,3 +56,5 @@ node_modules/
 Thumbs.db
 *.swp
 *.tmp
+# 本机 safe-delete 守卫暂留的临时诊断文件（绝不可进镜像）
+_rm_result.txt
