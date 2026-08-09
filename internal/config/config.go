@@ -36,12 +36,14 @@ func DefaultValues() map[string]string {
 			"https://raw.githubusercontent.com/huang770101/my-iptv/main/IPTV-ipv4.m3u",
 			"https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u",
 			"https://live.fanmingming.cn/tv/m3u/ipv6.m3u",
-			"https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u",
-			"https://iptv-org.github.io/iptv/countries/tw.m3u",
-			"https://iptv-org.github.io/iptv/index.m3u",
-		}, "\n"),
+		"https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u",
+		// iptv-org.github.io 已被墙且路径已重组为 streams/，改用实测可达的 raw 源：
+		"https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tw.m3u",
+		"https://raw.githubusercontent.com/iptv-org/iptv/master/streams/hk.m3u",
+	}, "\n"),
 		"Sources.github_sources": strings.Join([]string{
-			"wcb1969/iptv/main",
+			// 注意：wcb1969/iptv 已被 GitHub 全局 451 封锁（区域无关的硬封锁），
+			// 代理/镜像均无法恢复，故从默认源移除；收音机/电影/MTV 请走 Sources.local_dirs 自备。
 			"joevess/IPTV/main",
 			"suxuang/myIPTV/main",
 			"YueChan/Live",

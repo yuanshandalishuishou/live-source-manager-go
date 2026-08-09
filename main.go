@@ -87,6 +87,9 @@ func main() {
 	}
 	log.Info("配置默认值已就绪（新增 %d 项）", n)
 
+	// 一次性迁移：清理老库中失效/被墙的上游（让海外部署现有 DB 也能拉港台）。
+	migrateSourceLists(cfg)
+
 	// Seed category dictionary from YAML.
 	yamlPath := filepath.Join(absDir, "config", "channel_rules.yml")
 	if _, statErr := os.Stat(yamlPath); statErr == nil {
@@ -265,4 +268,49 @@ func normalizePath(p string) string {
 		}
 	}
 	return p
+}
+
+// migrateSourceLists cleans legacy/defunct upstream sources in existing
+// databases so overseas deployments that were seeded with broken URLs or dead
+// repos start pulling HK/TW streams again. Naturally idempotent: it only
+// rewrites a list when the offending substrings are still present.
+func migrateSourceLists(cfg *config.Config) {
+	// online_urls: drop the walled/expired iptv-org.github.io links and ensure
+	// the reachable iptv-org/iptv streams/tw.m3u + streams/hk.m3u are present.
+	online := cfg.Get("Sources", "online_urls", "")
+	if strings.Contains(online, "iptv-org.github.io") {
+		lines := make([]string, 0, len(strings.Split(online, "\n"))+2)
+		for _, ln := range strings.Split(online, "\n") {
+			if strings.TrimSpace(ln) == "" || strings.Contains(ln, "iptv-org.github.io") {
+				continue
+			}
+			lines = append(lines, ln)
+		}
+		for _, add := range []string{
+			"https://raw.githubusercontent.com/iptv-org/iptv/master/streams/tw.m3u",
+			"https://raw.githubusercontent.com/iptv-org/iptv/master/streams/hk.m3u",
+		} {
+			if !strings.Contains(strings.Join(lines, "\n"), add) {
+				lines = append(lines, add)
+			}
+		}
+		cfg.Set("Sources", "online_urls", strings.Join(lines, "\n"))
+		logger.L().Info("迁移：online_urls 已替换为 iptv-org streams/(tw+hk)，移除被墙的 iptv-org.github.io")
+	}
+
+	// github_sources: drop the globally-451 repo wcb1969/iptv (proxy/mirror
+	// cannot recover a GitHub-wide block). Radio/Movie/MTV recovery must go
+	// through Sources.local_dirs with self-provided m3u files.
+	gh := cfg.Get("Sources", "github_sources", "")
+	if strings.Contains(gh, "wcb1969/iptv") {
+		lines := make([]string, 0, len(strings.Split(gh, "\n")))
+		for _, ln := range strings.Split(gh, "\n") {
+			if strings.TrimSpace(ln) == "" || strings.Contains(ln, "wcb1969/iptv") {
+				continue
+			}
+			lines = append(lines, ln)
+		}
+		cfg.Set("Sources", "github_sources", strings.Join(lines, "\n"))
+		logger.L().Info("迁移：github_sources 已移除 wcb1969/iptv(全局451)")
+	}
 }
