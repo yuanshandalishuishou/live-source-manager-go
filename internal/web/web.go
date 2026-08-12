@@ -116,6 +116,7 @@ func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager, epgMgr *e
 	s.route("GET", "/api/sources", s.hListSources, true)
 	s.route("POST", "/api/sources", s.hCreateSource, true)
 	s.route("POST", "/api/sources/collect", s.hCollectSources, true)
+	s.route("POST", "/api/sources/generate", s.hGenerateM3U, true)
 	s.route("GET", "/api/sources/{source_id}", s.hGetSource, true)
 	s.route("PUT", "/api/sources/{source_id}", s.hUpdateSource, true)
 	s.route("DELETE", "/api/sources/{source_id}", s.hDeleteSource, true)

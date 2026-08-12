@@ -223,6 +223,27 @@ func (s *Server) hCollectSources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// hGenerateM3U triggers a one-shot pipeline run that collects sources and writes
+// the M3U file to the configured output dir (www/output/live.m3u by default).
+// Unlike /api/sources/collect (which only refreshes the in-memory channel cache),
+// this actually produces the published file served on the fileshare port.
+func (s *Server) hGenerateM3U(w http.ResponseWriter, r *http.Request) {
+	rep, err := s.mgr.Generate(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"ok":    false,
+			"error": "生成 M3U 失败: " + err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"collected":   rep.Collected,
+		"classified":  rep.Classified,
+		"output_path": rep.OutputPath,
+	})
+}
+
 func (s *Server) hGetSourceCategories(w http.ResponseWriter, r *http.Request) {
 	id := routeParam(r, "source_id")
 	cats, err := db.GetSourceCategories(s.conn, id)

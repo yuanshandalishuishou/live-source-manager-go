@@ -78,6 +78,10 @@ type RunOptions struct {
 	TestEnabled     bool
 	GenerateEnabled bool
 	CollectOpts     source.CollectOptions
+	// ForceInclude keeps every collected channel regardless of test status.
+	// Used by one-shot Generate (which skips the speed test, so channels have
+	// no "success"/"failed" verdict yet and must all be emitted).
+	ForceInclude bool
 }
 
 // Report summarizes a pipeline run.
@@ -129,6 +133,9 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 
 	if opts.GenerateEnabled {
 		optsM3U := m.buildM3UOpts()
+		if opts.ForceInclude {
+			optsM3U.IncludeFailed = true
+		}
 		if err := util.EnsureDir(optsM3U.OutputDir); err != nil {
 			logger.L().Warning("创建输出目录失败：%v", err)
 		}
@@ -142,6 +149,21 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 
 	rep.DurationMs = time.Since(start).Milliseconds()
 	return rep, nil
+}
+
+// Generate runs the full pipeline once: collect -> classify -> write M3U.
+// It skips the speed test (TestEnabled=false) so the M3U is produced quickly
+// and contains all collected channels regardless of reachability. EPG url-tvg
+// injection is applied inside buildM3UOpts when enabled. This is the one-shot
+// counterpart to the scheduler and is what the web UI / API call to actually
+// produce the published live.m3u file.
+func (m *Manager) Generate(ctx context.Context) (*Report, error) {
+	return m.Run(ctx, RunOptions{
+		TestEnabled:     false,
+		GenerateEnabled: true,
+		ForceInclude:    true,
+		CollectOpts:     m.buildCollectOpts(),
+	})
 }
 
 // ── scheduler (auto-scan) ────────────────────────────────────────────────
