@@ -438,14 +438,20 @@ func (m *Manager) CollectAllContext(ctx context.Context, opts CollectOptions) (*
 	mergeReport(final, online)
 	mergeReport(final, github)
 
-	// Dedup channels by ID (keep first occurrence).
+	// Dedup channels by original stream URL (keep first occurrence).
+	// 对齐 Python M3UGenerator.dedup_sources_by_url：按 url 去重而非 ch.ID
+	// (md5(name|url))，避免「同名不同源」或「同 url 不同名」被错误合并/保留。
+	// 空 url 的频道不参与去重，直接保留。
 	seen := map[string]bool{}
 	var deduped []types.Channel
 	for _, ch := range final.Channels {
-		if seen[ch.ID] {
-			continue
+		u := ch.URL
+		if u != "" {
+			if seen[u] {
+				continue
+			}
+			seen[u] = true
 		}
-		seen[ch.ID] = true
 		deduped = append(deduped, ch)
 	}
 	final.Channels = deduped
@@ -628,12 +634,15 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				FileID:      fileID,
 				FileName:    fileName,
 				UserAgent:   ua,
-				Referrer:    referer,
-				Categories:  nil,
-				Status:      "",
-			}
-			channels = append(channels, ch)
-			continue
+			Referrer:    referer,
+			Categories:  nil,
+			Status:      "",
+			// 缺省视为有视频流（对齐 Python has_video_stream 缺省 True）；
+			// 仅当 ffprobe 实测为纯音频时才翻转为 false。
+			HasVideoStream: true,
+		}
+		channels = append(channels, ch)
+		continue
 		}
 
 		// Plain URL line (no #EXTINF).
@@ -656,15 +665,16 @@ func parseM3U(content, fileID, fileName string, exclusions map[string]string) []
 				URLOriginal: streamURL,
 				FileID:      fileID,
 				FileName:    fileName,
-				UserAgent:   inlineUA,
-				Referrer:    inlineReferer,
-				Group:       "",
-				Categories:  nil,
-				Status:      "",
-			}
-			channels = append(channels, ch)
+			UserAgent:   inlineUA,
+			Referrer:    inlineReferer,
+			Group:       "",
+			Categories:  nil,
+			Status:      "",
+			HasVideoStream: true,
 		}
+		channels = append(channels, ch)
 	}
+}
 	return channels
 }
 
@@ -694,15 +704,16 @@ func parseTXT(content, fileID, fileName string, exclusions map[string]string) []
 			URLOriginal: streamURL,
 			FileID:      fileID,
 			FileName:    fileName,
-			UserAgent:   inlineUA,
-			Referrer:    inlineReferer,
-			Group:       "",
-			Categories:  nil,
-			Status:      "",
-		}
-		channels = append(channels, ch)
+		UserAgent:   inlineUA,
+		Referrer:    inlineReferer,
+		Group:       "",
+		Categories:  nil,
+		Status:      "",
+		HasVideoStream: true,
 	}
-	return channels
+	channels = append(channels, ch)
+}
+return channels
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

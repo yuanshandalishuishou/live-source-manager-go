@@ -230,9 +230,27 @@ func groupChannels(channels []types.Channel, groupBy string) (map[string][]types
 	return groups, order
 }
 
+// mediaTypeOf 返回频道的归一化媒体类型（小写）。对齐 Python source['media_type']：
+// 缺省 video；纯音频流经 refineMediaType 细分为 radio/audio。
+func mediaTypeOf(c types.Channel) string {
+	mt := strings.ToLower(strings.TrimSpace(c.MediaType))
+	if mt == "" {
+		return "video"
+	}
+	return mt
+}
+
 func groupKey(c types.Channel, groupBy string) string {
 	switch groupBy {
 	case "category":
+		// 媒体类型专属分组（对齐 Python enhanced_group_and_sort_sources）：
+		// 收音机/在线音频独立成组，视频走 content 维度分组。
+		switch mediaTypeOf(c) {
+		case "radio":
+			return "收音机"
+		case "audio":
+			return "在线音频"
+		}
 		if c.Categories != nil {
 			if v, ok := c.Categories["content"]; ok && strings.TrimSpace(v) != "" {
 				return v
@@ -314,6 +332,14 @@ func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 		mediaType = "video"
 	}
 	parts = append(parts, fmt.Sprintf(`media-type="%s"`, mediaType))
+
+	// 地区信息：对齐 Python tvg-country/region/province。Go 仅在 Categories
+	// 携带 region(省级)维度时注入 tvg-region（其余维度 Python 端未稳定承载）。
+	if c.Categories != nil {
+		if region, ok := c.Categories["region"]; ok && strings.TrimSpace(region) != "" {
+			parts = append(parts, fmt.Sprintf(`tvg-region="%s"`, region))
+		}
+	}
 
 	if c.Resolution != "" {
 		parts = append(parts, fmt.Sprintf(`resolution="%s"`, c.Resolution))

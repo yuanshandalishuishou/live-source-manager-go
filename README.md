@@ -23,7 +23,8 @@
 | M3U/TXT 解析 | ✅ | ✅ 含 URL 门禁（`is_static_safe`） |
 | 分类规则引擎 | ✅ | ✅ 关键词规则 + 频道映射 |
 | 流测试 | ffprobe/ffmpeg | ✅ 同（ffprobe 可选） |
-| M3U 生成 | ✅ | ✅ |
+| M3U 生成 | ✅ | ✅ 含媒体类型分组（收音机/在线音频）+ EPG 注入 |
+| EPG 节目单 | ✅ | ✅ url-tvg + tvg-id/tvg-logo/tvg-region，XMLTV 导出 epg.xml.gz |
 | Web UI | FastAPI + Jinja2 | ✅ `net/http` + `html/template` + `//go:embed` |
 | 认证 | Session + CSRF | ✅ Session Cookie + `X-CSRF-Token` |
 | 实时测速 | WebSocket | ✅ SSE + 轮询兜底 |
@@ -146,6 +147,53 @@ CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o bin/lsm .
 
 ---
 
+## 输出与 EPG（live.m3u / 媒体类型分组 / 去重）
+
+Go 版与 Python 版在「生成播放列表」环节已逐轮对齐，确保 `live.m3u` 同时包含**检测有效的电视节目、收音机节目、其他节目**，并附带 EPG 节目单信息。
+
+### 生成流水线
+
+```
+采集(本地/在线/GitHub) → 分类(规则引擎+频道映射) → [可选] ffprobe 测速 → 生成 live.m3u + epg.xml.gz
+```
+
+- 默认端口 12345 发布的 `www/output/live.m3u` 由上述流水线产出；开启「定时自动执行」后周期性刷新。
+- 未开启测速时，`Generate()` 会跳过 ffprobe、直接产出全部已采集频道（无论可达性），便于快速生成全量列表。
+
+### 媒体类型分组（收音机 / 在线音频）
+
+对齐 Python `enhanced_group_and_sort_sources`：
+
+- **电视节目（video）**：按 `content` 维度分组（如「央视」「卫视」「地方」等），空值回落「其他」。
+- **收音机（radio）**：独立成组 `收音机`。
+- **在线音频（audio）**：独立成组 `在线音频`。
+
+判定逻辑（端口自 Python `classify_media_type` / `_refine_audio_type`）：
+
+1. 以 **ffprobe 实测的 `has_video_stream`** 为准：纯音频流（无视频流）按频道名关键词细分 radio/audio；未测速的频道缺省视为有视频流 → `video`（与 Python 一致）。
+2. 极低分辨率（宽或高 < 100）视频按音频细分。
+3. 收音机关键词：`radio`/`广播`/`电台`/`fm`/`am`/`交通广播`/`音乐广播`/`新闻广播`/`经济广播`/`文艺广播`/`都市广播`/`农村广播`；其余音频关键词：`music`/`音乐`/`歌曲`/`mtv`/`演唱会`/`音乐会`/`有声`/`听书`/`相声`/`小品`/`朗诵`/`配音`/`音效`/`asmr`/`播客`；均未命中则默认 `audio`。
+4. 因此**要先看到收音机/在线音频分组，需开启测速**（ffprobe 能识别出纯音频流）。仅采集不测速时一律归为 `video`。
+
+> `#EXTINF` 行会写入 `media-type="video|audio|radio"` 便于播放器识别。
+
+### EPG 节目单注入
+
+对齐 Python `generate_enhanced_m3u` 的 EPG 注入：
+
+- **`#EXTM3U` 头**：当 EPG 总开关与注入开关同时为 `True`、且能推导出外链地址时，注入 `url-tvg` 与 `x-tvg-url`（双属性兼容 DIYP/Kodi/TiviMate）。
+- **每频道属性**：`tvg-id` / `tvg-logo` 优先使用 EPG 频道对齐结果（`channel_name_mapping`），未命中则按频道名生成占位 id；省级维度注入 `tvg-region`。
+- **节目单文件**：`epg.Manager` 抓取并归一化对齐后原子导出 `epg.xml.gz`，外链地址由 `GetEPGURL` 推导。
+
+### 去重（按原始 URL）
+
+采集与实时测速**均按原始流地址（url）去重**，对齐 Python `dedup_sources_by_url`：
+
+- 保留首次出现，同名不同源 / 同源不同名均不会被错误合并或误删。
+- 实时测速前同样按 url 去重，仅对唯一地址发起一次探测（Web「实时测试」页会显示「剔除重复 N」）。
+
+---
+
 ## 部署
 
 ### Docker / docker-compose
@@ -203,6 +251,7 @@ Start-ScheduledTask -TaskName LiveSourceManagerWeb
 2. **无 venv / pip**：单二进制，镜像体积更小，启动更快。
 3. **定时任务内置**：用 Go 调度器替代系统 cron，配置集中在 Web UI。
 4. **词典位置**：`config/channel_rules.yml` 由二进制在启动时幂等导入 SQLite，容器镜像已内嵌一份。
+5. **EPG / 去重 / 媒体类型分组已与 Python 对齐**：`live.m3u` 同样产出检测有效的电视/收音机/其他节目并附带 EPG（url-tvg + tvg-id/logo/region、XMLTV 导出）；采集与测速均按原始 URL 去重；收音机/在线音频独立分组由 ffprobe 的 `has_video_stream` 驱动（逻辑端口自 Python `classify_media_type`）。
 
 ---
 

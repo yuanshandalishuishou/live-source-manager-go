@@ -9,6 +9,9 @@
 lsm
 lsm-go
 
+# Go 临时构建目录（go build -tmpdir 等），勿入库
+.gotmp/
+
 # 外部二进制：ffmpeg / ffprobe（约 180MB，绝对不入库）
 # 部署时获取：源码部署放 tools/ffmpeg/ 目录；Docker 构建期自动下载（见 DOCKER_RUN.md 第七章）
 tools/ffmpeg/*.exe

@@ -1,6 +1,6 @@
 // Package config provides the application configuration backed by the SQLite app_config table.
 //
-// All 64 default keys are defined here (matching the Python project's Config._DEFAULT_VALUES)
+// All default config keys are defined here (matching the Python project's Config._DEFAULT_VALUES)
 // and are used both as the seed source for the database and as fallbacks when a key is missing.
 package config
 
@@ -109,11 +109,15 @@ func DefaultValues() map[string]string {
 		"Output.max_sources_per_channel": "8",
 		"Output.enable_filter":           "False",
 		"Output.whitelist_force_keep":    "False",
+		"Output.output_dir":             "./www/output",
 		// [Logging]
 		"Logging.level":        "INFO",
 		"Logging.file":         "./log/app.log",
 		"Logging.max_size":     "10",
 		"Logging.backup_count": "5",
+		// [Session] 会话过期（秒）。首启即播种，使配置中心可见可改（对齐 Python 完整播种）。
+		"Session.idle_timeout": "1800",
+		"Session.session_ttl":  "28800",
 		// [Filter]
 		"Filter.max_latency":            "4000",
 		"Filter.min_bitrate":            "80",

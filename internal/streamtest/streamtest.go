@@ -548,8 +548,10 @@ func (t *Tester) probeFFprobe(ctx context.Context, u, ua, referer string, bin st
 	}
 
 	res := types.TestResult{}
+	hasVideo := false
 	for _, s := range out.Streams {
 		if s.CodecType == "video" {
+			hasVideo = true
 			if s.Width > 0 && s.Height > 0 {
 				res.Resolution = fmt.Sprintf("%dx%d", s.Width, s.Height)
 			}
@@ -561,6 +563,8 @@ func (t *Tester) probeFFprobe(ctx context.Context, u, ua, referer string, bin st
 			break
 		}
 	}
+	// 对齐 Python has_video_stream：ffprobe 命中视频流为 true，纯音频(有流但无视频)为 false。
+	res.HasVideoStream = hasVideo
 	if out.Format.BitRate != "" {
 		if b, e := strconv.Atoi(out.Format.BitRate); e == nil {
 			res.Bitrate = b / 1000

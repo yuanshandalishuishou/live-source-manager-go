@@ -131,6 +131,11 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 		logger.L().Info("测试完成：成功 %d，失败 %d", rep.Success, rep.Failed)
 	}
 
+	// 媒体类型精修（对齐 Python classify_media_type / _refine_audio_type）：
+	// 纯音频流(无视频流)按频道名关键词细分为 radio/audio，其余为 video。
+	// 必须放在测试合并之后、生成之前。
+	refineMediaType(channels)
+
 	if opts.GenerateEnabled {
 		optsM3U := m.buildM3UOpts()
 		if opts.ForceInclude {
@@ -725,9 +730,62 @@ func applyTestResults(channels []types.Channel, results []types.TestResult) {
 			channels[i].Resolution = r.Resolution
 			channels[i].Bitrate = r.Bitrate
 			channels[i].FPS = r.FPS
+			channels[i].HasVideoStream = r.HasVideoStream
 			channels[i].IsQualified = r.Status == "success"
 		}
 	}
+}
+
+// refineMediaType 端口自 Python manager.classify_media_type / _refine_audio_type。
+// 规则：仅当 ffprobe 实测为纯音频流(无视频流)时，才按频道名关键词细分为
+// radio / audio；其余一律 video。未测试频道的 HasVideoStream 缺省为 true，
+// 因此保持 video（与 Python has_video_stream 缺省 True 一致）。
+func refineMediaType(channels []types.Channel) {
+	for i := range channels {
+		ch := &channels[i]
+		if !ch.HasVideoStream {
+			ch.MediaType = refineAudioType(ch.Name)
+			continue
+		}
+		// 极低分辨率视频(可能是误判的音频)也按音频细分。
+		if res := ch.Resolution; res != "" && strings.Contains(res, "x") {
+			parts := strings.SplitN(res, "x", 2)
+			if w, err1 := strconv.Atoi(strings.TrimSpace(parts[0])); err1 == nil {
+				if h, err2 := strconv.Atoi(strings.TrimSpace(parts[1])); err2 == nil {
+					if w < 100 || h < 100 {
+						ch.MediaType = refineAudioType(ch.Name)
+						continue
+					}
+				}
+			}
+		}
+		ch.MediaType = "video"
+	}
+}
+
+// refineAudioType 端口自 Python _refine_audio_type：优先匹配收音机关键词，
+// 其次在线音频关键词，均未命中则默认 audio。
+func refineAudioType(name string) string {
+	lower := strings.ToLower(name)
+	radioKeywords := []string{
+		"radio", "广播", "电台", "fm", "am", "交通广播", "音乐广播", "新闻广播",
+		"经济广播", "文艺广播", "都市广播", "农村广播",
+	}
+	audioKeywords := []string{
+		"music", "音乐", "歌曲", "mtv", "演唱会", "音乐会", "有声", "听书",
+		"相声", "小品", "朗诵", "配音", "音效", "asmr", "播客",
+	}
+	for _, k := range radioKeywords {
+		if strings.Contains(lower, k) {
+			return "radio"
+		}
+	}
+	for _, k := range audioKeywords {
+		if strings.Contains(lower, k) {
+			return "audio"
+		}
+	}
+	return "audio"
 }
 
 func splitCSV(s string) []string {

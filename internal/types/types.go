@@ -23,6 +23,7 @@ type Channel struct {
 	Bitrate          int               `json:"bitrate"`
 	FPS              float64           `json:"fps"`
 	MediaType        string            `json:"media_type"`
+	HasVideoStream   bool              `json:"has_video_stream"` // ffprobe 检测：默认 true（对齐 Python has_video_stream 缺省 True）
 	IsQualified      bool              `json:"is_qualified"`
 }
 
@@ -53,6 +54,7 @@ type TestResult struct {
 	Resolution    string  `json:"resolution"`
 	Bitrate       int     `json:"bitrate"`
 	FPS           float64 `json:"fps"`
+	HasVideoStream bool    `json:"has_video_stream"`
 	Error         string  `json:"error,omitempty"`
 	Message       string  `json:"message,omitempty"`
 	RetryInfo     string  `json:"retry_info,omitempty"`
