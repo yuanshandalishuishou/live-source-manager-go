@@ -112,14 +112,14 @@ func (s *Server) hCreateEPGSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name          string `json:"name"`
-		URL           string `json:"url"`
-		Enabled       bool   `json:"enabled"`
-		Priority      int    `json:"priority"`
-		RefreshMode   string `json:"refresh_mode"`
-		RefreshAt     string `json:"refresh_at"`
-		RefreshMinutes int   `json:"refresh_minutes"`
-		Remark        string `json:"remark"`
+		Name           string `json:"name"`
+		URL            string `json:"url"`
+		Enabled        bool   `json:"enabled"`
+		Priority       int    `json:"priority"`
+		RefreshMode    string `json:"refresh_mode"`
+		RefreshAt      string `json:"refresh_at"`
+		RefreshMinutes int    `json:"refresh_minutes"`
+		Remark         string `json:"remark"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "请求体必须为 JSON"})
@@ -135,14 +135,14 @@ func (s *Server) hCreateEPGSource(w http.ResponseWriter, r *http.Request) {
 		name = url
 	}
 	src := types.EPGSource{
-		Name:          name,
-		URL:           url,
-		Enabled:       body.Enabled,
-		Priority:      body.Priority,
-		RefreshMode:   strings.TrimSpace(body.RefreshMode),
-		RefreshAt:     strings.TrimSpace(body.RefreshAt),
+		Name:           name,
+		URL:            url,
+		Enabled:        body.Enabled,
+		Priority:       body.Priority,
+		RefreshMode:    strings.TrimSpace(body.RefreshMode),
+		RefreshAt:      strings.TrimSpace(body.RefreshAt),
 		RefreshMinutes: body.RefreshMinutes,
-		Remark:        strings.TrimSpace(body.Remark),
+		Remark:         strings.TrimSpace(body.Remark),
 	}
 	if src.Priority == 0 {
 		src.Priority = 100
@@ -391,13 +391,13 @@ func (s *Server) hMatchEPGChannel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hEPGStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := map[string]any{
-		"enabled":          s.epgMgr.Enabled(),
-		"inject_into_m3u":  s.epgMgr.InjectEnabled(),
-		"output_filename":  strings.TrimSpace(s.cfg.Get("EPG", "output_filename", "epg.xml.gz")),
-		"timezone":         s.cfg.Get("EPG", "timezone", "Asia/Shanghai"),
-		"refresh_mode":     s.cfg.Get("EPG", "refresh_mode", "daily"),
-		"refresh_at":       s.cfg.Get("EPG", "refresh_at", "03:30"),
-		"refresh_minutes":  s.cfg.GetInt("EPG", "refresh_minutes", 360),
+		"enabled":         s.epgMgr.Enabled(),
+		"inject_into_m3u": s.epgMgr.InjectEnabled(),
+		"output_filename": strings.TrimSpace(s.cfg.Get("EPG", "output_filename", "epg.xml.gz")),
+		"timezone":        s.cfg.Get("EPG", "timezone", "Asia/Shanghai"),
+		"refresh_mode":    s.cfg.Get("EPG", "refresh_mode", "daily"),
+		"refresh_at":      s.cfg.Get("EPG", "refresh_at", "03:30"),
+		"refresh_minutes": s.cfg.GetInt("EPG", "refresh_minutes", 360),
 	}
 	stats, err := db.GetEPGStats(s.conn)
 	if err != nil {
@@ -415,14 +415,14 @@ func (s *Server) hEPGStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"config":  cfg,
-		"url":     s.epgMgr.GetEPGURL(),
-		"stats":   stats,
-		"running": state.Running,
-		"message": state.Message,
+		"ok":           true,
+		"config":       cfg,
+		"url":          s.epgMgr.GetEPGURL(),
+		"stats":        stats,
+		"running":      state.Running,
+		"message":      state.Message,
 		"last_refresh": state.FinishedAt,
-		"last_result": map[string]any{"total": total, "ok": okCount, "failed": failed},
+		"last_result":  map[string]any{"total": total, "ok": okCount, "failed": failed},
 	})
 }
 

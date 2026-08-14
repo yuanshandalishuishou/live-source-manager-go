@@ -41,7 +41,7 @@ func parseHHMM(s string) (int, int, bool) {
 }
 
 func atoiSafe(s string) (int, error) { return strconv.Atoi(s) }
-func itoa(n int) string               { return strconv.Itoa(n) }
+func itoa(n int) string              { return strconv.Itoa(n) }
 
 type epgScheduler struct {
 	mgr     *epg.Manager
@@ -141,7 +141,7 @@ func (s *epgScheduler) tick(ctx context.Context) {
 	if len(due) == 0 {
 		return
 	}
-		logger.L().Info("[EPG-SCHED] 到点触发刷新 %d 个源", len(due))
+	logger.L().Info("[EPG-SCHED] 到点触发刷新 %d 个源", len(due))
 	if _, err := s.mgr.RefreshAll(ctx, due); err != nil {
 		if strings.Contains(err.Error(), "进行中") {
 			logger.L().Info("[EPG-SCHED] 刷新已被其他任务占用，跳过本次触发")

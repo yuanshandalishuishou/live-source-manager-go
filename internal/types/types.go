@@ -42,22 +42,22 @@ type SourceFile struct {
 // Fields Name/Source/SourceType/Category/RetryInfo mirror the Python
 // livetest.html dimensions so the Go test page shows the same columns.
 type TestResult struct {
-	ID            string  `json:"id"`
-	URL           string  `json:"url"`
-	Name          string  `json:"name,omitempty"`        // 频道名（来自源文件）
-	Source        string  `json:"source,omitempty"`      // 所在源文件（文件名）
-	SourceType    string  `json:"source_type,omitempty"` // local | online | github
-	Status        string  `json:"status"`                // success | failed | timeout | connection_failed | dns_error | blacklisted | ...
-	Category      string  `json:"category,omitempty"`    // 归一化错误类别（失败原因分布用）
-	ResponseTime  float64 `json:"response_time"`
-	DownloadSpeed float64 `json:"download_speed"`
-	Resolution    string  `json:"resolution"`
-	Bitrate       int     `json:"bitrate"`
-	FPS           float64 `json:"fps"`
+	ID             string  `json:"id"`
+	URL            string  `json:"url"`
+	Name           string  `json:"name,omitempty"`        // 频道名（来自源文件）
+	Source         string  `json:"source,omitempty"`      // 所在源文件（文件名）
+	SourceType     string  `json:"source_type,omitempty"` // local | online | github
+	Status         string  `json:"status"`                // success | failed | timeout | connection_failed | dns_error | blacklisted | ...
+	Category       string  `json:"category,omitempty"`    // 归一化错误类别（失败原因分布用）
+	ResponseTime   float64 `json:"response_time"`
+	DownloadSpeed  float64 `json:"download_speed"`
+	Resolution     string  `json:"resolution"`
+	Bitrate        int     `json:"bitrate"`
+	FPS            float64 `json:"fps"`
 	HasVideoStream bool    `json:"has_video_stream"`
-	Error         string  `json:"error,omitempty"`
-	Message       string  `json:"message,omitempty"`
-	RetryInfo     string  `json:"retry_info,omitempty"`
+	Error          string  `json:"error,omitempty"`
+	Message        string  `json:"message,omitempty"`
+	RetryInfo      string  `json:"retry_info,omitempty"`
 }
 
 // TestProgress describes the live status of a running/paused test pass.
