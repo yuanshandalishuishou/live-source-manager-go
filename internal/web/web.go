@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/json"
 	"html/template"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -301,8 +302,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// CSRF gate for state-changing methods.
+	// Only /api/auth/login is exempt: it has no session yet, so there is no
+	// CSRF token to validate. Logout MUST be CSRF-protected to prevent
+	// cross-site forced logout attacks.
 	if (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete) &&
-		r.URL.Path != "/api/auth/login" && r.URL.Path != "/api/auth/logout" {
+		r.URL.Path != "/api/auth/login" {
 		if !s.checkCSRF(r, sid) {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "csrf token missing or invalid"})
 			return
@@ -369,9 +373,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// maxJSONBodyBytes limits request body size to prevent memory exhaustion DoS.
+const maxJSONBodyBytes = 2 * 1024 * 1024 // 2 MB — sufficient for all config/API payloads
+
 func readJSON(r *http.Request, v any) error {
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(v)
+	return json.NewDecoder(io.LimitReader(r.Body, maxJSONBodyBytes)).Decode(v)
 }
 
 func currentUser(r *http.Request) *types.User {

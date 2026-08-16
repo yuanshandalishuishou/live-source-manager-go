@@ -257,6 +257,24 @@ func groupKey(c types.Channel, groupBy string) string {
 			}
 		}
 		return "其他"
+	case "country":
+		// Group by country/region dimension (M11 fix: align with FieldOptions).
+		if c.Categories != nil {
+			if v, ok := c.Categories["country"]; ok && strings.TrimSpace(v) != "" {
+				return v
+			}
+			if v, ok := c.Categories["region"]; ok && strings.TrimSpace(v) != "" {
+				return v
+			}
+		}
+		return "其他"
+	case "name":
+		// Group by channel name (M11 fix: align with FieldOptions).
+		name := strings.TrimSpace(c.Name)
+		if name != "" {
+			return name
+		}
+		return "Unknown"
 	case "source":
 		if strings.TrimSpace(c.Group) != "" {
 			return c.Group
@@ -303,6 +321,16 @@ func buildHeader(opts Options) string {
 	return fmt.Sprintf(`#EXTM3U url-tvg="%s" x-tvg-url="%s"`, epgURL, epgURL)
 }
 
+// escapeAttr sanitizes a string for safe embedding inside a double-quoted
+// M3U attribute value. Double quotes and newlines are stripped to prevent
+// attribute injection (M6 fix).
+func escapeAttr(s string) string {
+	s = strings.ReplaceAll(s, `"`, "")
+	s = strings.ReplaceAll(s, "\n", "")
+	s = strings.ReplaceAll(s, "\r", "")
+	return s
+}
+
 func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 	name := c.Name
 	if name == "" {
@@ -320,45 +348,45 @@ func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 			logo = info[1]
 		}
 	}
-	parts = append(parts, fmt.Sprintf(`tvg-id="%s"`, tvgID))
-	parts = append(parts, fmt.Sprintf(`tvg-name="%s"`, name))
+	parts = append(parts, fmt.Sprintf(`tvg-id="%s"`, escapeAttr(tvgID)))
+	parts = append(parts, fmt.Sprintf(`tvg-name="%s"`, escapeAttr(name)))
 	if logo != "" {
-		parts = append(parts, fmt.Sprintf(`tvg-logo="%s"`, logo))
+		parts = append(parts, fmt.Sprintf(`tvg-logo="%s"`, escapeAttr(logo)))
 	}
-	parts = append(parts, fmt.Sprintf(`group-title="%s"`, groupTitle))
+	parts = append(parts, fmt.Sprintf(`group-title="%s"`, escapeAttr(groupTitle)))
 
 	mediaType := c.MediaType
 	if mediaType == "" {
 		mediaType = "video"
 	}
-	parts = append(parts, fmt.Sprintf(`media-type="%s"`, mediaType))
+	parts = append(parts, fmt.Sprintf(`media-type="%s"`, escapeAttr(mediaType)))
 
 	// 地区信息：对齐 Python tvg-country/region/province。Go 仅在 Categories
 	// 携带 region(省级)维度时注入 tvg-region（其余维度 Python 端未稳定承载）。
 	if c.Categories != nil {
 		if region, ok := c.Categories["region"]; ok && strings.TrimSpace(region) != "" {
-			parts = append(parts, fmt.Sprintf(`tvg-region="%s"`, region))
+			parts = append(parts, fmt.Sprintf(`tvg-region="%s"`, escapeAttr(region)))
 		}
 	}
 
 	if c.Resolution != "" {
-		parts = append(parts, fmt.Sprintf(`resolution="%s"`, c.Resolution))
+		parts = append(parts, fmt.Sprintf(`resolution="%s"`, escapeAttr(c.Resolution)))
 	}
 	if c.Bitrate > 0 {
 		parts = append(parts, fmt.Sprintf(`bitrate="%dkbps"`, c.Bitrate))
 	}
 	if c.Status != "" && c.Status != "success" {
-		parts = append(parts, fmt.Sprintf(`status="%s"`, c.Status))
+		parts = append(parts, fmt.Sprintf(`status="%s"`, escapeAttr(c.Status)))
 	}
 	// UA injection at the EXTINF level (Python parity): only when enabled and
 	// the channel actually carries a UA, and only for the extinf position.
 	if opts.UAEnabled && c.UserAgent != "" && (opts.UAPosition == "" || opts.UAPosition == "extinf") {
-		parts = append(parts, fmt.Sprintf(`user-agent="%s"`, c.UserAgent))
+		parts = append(parts, fmt.Sprintf(`user-agent="%s"`, escapeAttr(c.UserAgent)))
 	}
 	// Referer injection at the EXTINF level (Python lacks this; Go wires it so
 	// generated playlists carry the Referer these sources require).
 	if opts.RefererEnabled && c.Referrer != "" && (opts.RefererPosition == "" || opts.RefererPosition == "extinf") {
-		parts = append(parts, fmt.Sprintf(`http-referer="%s"`, c.Referrer))
+		parts = append(parts, fmt.Sprintf(`http-referer="%s"`, escapeAttr(c.Referrer)))
 	}
 	parts = append(parts, ","+name)
 	return strings.Join(parts, " ")
@@ -366,14 +394,15 @@ func buildExtinf(c types.Channel, groupTitle string, opts Options) string {
 
 // channelURL returns the stream URL, optionally appending the UA / Referer as a
 // "|User-Agent=..." / "|Referer=..." suffix when the url position is selected
-// (Python parity).
+// (Python parity). The '|' separator inside the UA/Referer value is replaced
+// to avoid breaking the pipe-delimited format (L19 fix).
 func channelURL(c types.Channel, opts Options) string {
 	u := c.URL
 	if opts.UAEnabled && c.UserAgent != "" && opts.UAPosition == "url" {
-		u = u + "|User-Agent=" + c.UserAgent
+		u = u + "|User-Agent=" + strings.ReplaceAll(c.UserAgent, "|", "")
 	}
 	if opts.RefererEnabled && c.Referrer != "" && opts.RefererPosition == "url" {
-		u = u + "|Referer=" + c.Referrer
+		u = u + "|Referer=" + strings.ReplaceAll(c.Referrer, "|", "")
 	}
 	return u
 }

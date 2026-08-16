@@ -132,8 +132,18 @@ func (s *epgScheduler) tick(ctx context.Context) {
 			} else if gh, gm, ok := parseHHMM(globalAt); ok {
 				h, m = gh, gm
 			}
-			if now.Hour() == h && now.Minute() == m &&
-				(lastDt == nil || lastDt.Day() != now.Day() || lastDt.Year() != now.Year() || lastDt.Month() != now.Month()) {
+			// Catch-up logic (M7 fix): if the source was last refreshed on a
+			// previous day (or never) and the scheduled time has already
+			// passed today, trigger a refresh so a process restart after the
+			// daily window doesn't skip the entire day.
+			scheduledToday := time.Date(now.Year(), now.Month(), now.Day(), h, m, 0, 0, now.Location())
+			if lastDt == nil {
+				// Never refreshed: trigger if scheduled time has passed today.
+				if !now.Before(scheduledToday) {
+					due = append(due, src.ID)
+				}
+			} else if lastDt.Before(scheduledToday) && !now.Before(scheduledToday) {
+				// Last refresh was before today's scheduled time and we're past it.
 				due = append(due, src.ID)
 			}
 		}

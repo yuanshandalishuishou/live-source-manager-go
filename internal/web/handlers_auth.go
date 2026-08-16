@@ -89,6 +89,7 @@ func (s *Server) hLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   r.TLS != nil, // Set Secure flag when served over HTTPS
 		SameSite: http.SameSiteLaxMode,
 	})
 	s.auditRaw(user.ID, user.Username, "login", "", clientIP(r))
@@ -101,10 +102,14 @@ func (s *Server) hLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hLogout(w http.ResponseWriter, r *http.Request) {
 	sid := cookieValue(r, cookieName)
 	if sid != "" {
-		if u, err := db.GetSession(s.conn, sid, 1800, 28800); err == nil && u != nil {
+		idle := s.cfg.GetInt("Session", "idle_timeout", 1800)
+		ttl := s.cfg.GetInt("Session", "session_ttl", 28800)
+		if u, err := db.GetSession(s.conn, sid, idle, ttl); err == nil && u != nil {
 			s.auditRaw(u.ID, u.Username, "logout", "", clientIP(r))
 		}
 		_ = db.DeleteSession(s.conn, sid)
+		// Clean up CSRF token for this session to prevent token buildup.
+		s.csrf.Delete(sid)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,

@@ -157,7 +157,7 @@ func FieldOptions() map[string][]string {
 		"Network.proxy_type":            {"socks5", "http"},
 		"Testing.auto_scan_mode":        {"interval", "daily"},
 		"Testing.output_sort_by":        {"speed", "resolution", "name"},
-		"Output.group_by":               {"category", "country", "name"},
+		"Output.group_by":               {"category", "source", "country", "name"},
 		"Filter.resolution_filter_mode": {"range", "min", "max"},
 		"Filter.min_resolution":         {"240p", "360p", "480p", "720p", "1080p", "1440p", "4k"},
 		"Filter.max_resolution":         {"240p", "360p", "480p", "720p", "1080p", "1440p", "4k"},

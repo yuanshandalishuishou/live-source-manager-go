@@ -80,10 +80,13 @@ func (s *Server) hSystemInfo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hGetNetwork(w http.ResponseWriter, r *http.Request) {
 	net := s.cfg.GetNetworkConfig()
-	// Secret: never return the real token; the UI shows set/unset via
-	// github_token_set from /api/system/info and only posts a new value when
-	// the operator types one (empty = keep existing).
+	// Secrets: never return proxy credentials or the GitHub token in API
+	// responses. The UI shows set/unset via github_token_set from
+	// /api/system/info and only posts a new value when the operator types
+	// one (empty = keep existing). Proxy credentials follow the same pattern.
 	net["github_token"] = ""
+	net["proxy_password"] = ""
+	net["proxy_username"] = ""
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "network": net})
 }
 
@@ -186,10 +189,36 @@ func (s *Server) hLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": logPath, "lines": entries, "count": len(entries)})
 }
 
+// maxLogFileSize caps how much of the log file we read into memory. For
+// files larger than this, only the tail is read (L16 fix).
+const maxLogFileSize = 5 * 1024 * 1024 // 5 MB
+
 func tailFile(path string, n int) []string {
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return []string{}
+	}
+	// For large files, read only the last maxLogFileSize bytes.
+	var data []byte
+	if info.Size() > maxLogFileSize {
+		f, err := os.Open(path)
+		if err != nil {
+			return []string{}
+		}
+		defer f.Close()
+		seek := info.Size() - maxLogFileSize
+		if _, err := f.Seek(seek, io.SeekStart); err != nil {
+			return []string{}
+		}
+		data, err = io.ReadAll(f)
+		if err != nil {
+			return []string{}
+		}
+	} else {
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return []string{}
+		}
 	}
 	all := strings.Split(string(data), "\n")
 	var nonEmpty []string

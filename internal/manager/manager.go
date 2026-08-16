@@ -405,9 +405,13 @@ func (m *Manager) PeekChannels() ([]types.Channel, *source.CollectReport, bool) 
 // without blocking the caller. It reuses GetChannels (double-checked locking
 // prevents duplicate concurrent collections), so it is safe to call from a
 // request handler to prefetch data the dashboard will poll for.
+// A 5-minute timeout prevents the background goroutine from hanging forever
+// if a source URL is unresponsive (L18 fix).
 func (m *Manager) WarmChannels() {
 	go func() {
-		_, _, _ = m.GetChannels(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		_, _, _ = m.GetChannels(ctx)
 	}()
 }
 
@@ -664,15 +668,17 @@ func (m *Manager) buildTestParams() streamtest.Params {
 func (m *Manager) buildCollectOpts() source.CollectOptions {
 	n := m.cfg.GetNetworkConfig()
 	return source.CollectOptions{
-		Mirror:       toStr(n["github_mirror"]),
-		APIURL:       m.cfg.Get("GitHub", "api_url", "https://api.github.com"),
-		Token:        m.cfg.Get("GitHub", "api_token", ""),
-		UserAgent:    "Mozilla/5.0 (live-source-manager)",
-		ProxyEnabled: toBool(n["proxy_enabled"]),
-		ProxyType:    toStr(n["proxy_type"]),
-		ProxyHost:    toStr(n["proxy_host"]),
-		ProxyPort:    toInt(n["proxy_port"]),
-		TimeoutSec:   30,
+		Mirror:        toStr(n["github_mirror"]),
+		APIURL:        m.cfg.Get("GitHub", "api_url", "https://api.github.com"),
+		Token:         m.cfg.Get("GitHub", "api_token", ""),
+		UserAgent:     "Mozilla/5.0 (live-source-manager)",
+		ProxyEnabled:  toBool(n["proxy_enabled"]),
+		ProxyType:     toStr(n["proxy_type"]),
+		ProxyHost:     toStr(n["proxy_host"]),
+		ProxyPort:     toInt(n["proxy_port"]),
+		ProxyUsername: toStr(n["proxy_username"]),
+		ProxyPassword: toStr(n["proxy_password"]),
+		TimeoutSec:    30,
 	}
 }
 

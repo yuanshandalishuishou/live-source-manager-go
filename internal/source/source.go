@@ -34,16 +34,18 @@ import (
 
 // CollectOptions controls how sources are collected (network behavior).
 type CollectOptions struct {
-	Mirror       string // github mirror prefix, e.g. https://ghproxy.com/
-	APIURL       string // github api base
-	Token        string // github token (optional)
-	UserAgent    string
-	ProxyEnabled bool
-	ProxyType    string // socks5/http
-	ProxyHost    string
-	ProxyPort    int
-	TimeoutSec   int
-	Concurrency  int // max concurrent HTTP fetches (online/github); 0 => default (8)
+	Mirror        string // github mirror prefix, e.g. https://ghproxy.com/
+	APIURL        string // github api base
+	Token         string // github token (optional)
+	UserAgent     string
+	ProxyEnabled  bool
+	ProxyType     string // socks5/http
+	ProxyHost     string
+	ProxyPort     int
+	ProxyUsername string // proxy basic-auth username (optional)
+	ProxyPassword string // proxy basic-auth password (optional)
+	TimeoutSec    int
+	Concurrency   int // max concurrent HTTP fetches (online/github); 0 => default (8)
 }
 
 // CollectReport is the aggregated result of a collection pass.
@@ -933,7 +935,16 @@ func (m *Manager) httpClient(opts CollectOptions) *http.Client {
 		if strings.EqualFold(opts.ProxyType, "socks5") {
 			scheme = "socks5"
 		}
-		proxyURL, err := url.Parse(fmt.Sprintf("%s://%s:%d", scheme, opts.ProxyHost, opts.ProxyPort))
+		// Build proxy URL with optional basic-auth credentials.
+		proxyStr := fmt.Sprintf("%s://%s:%d", scheme, opts.ProxyHost, opts.ProxyPort)
+		if opts.ProxyUsername != "" {
+			proxyStr = fmt.Sprintf("%s://%s:%s@%s:%d",
+				scheme,
+				url.QueryEscape(opts.ProxyUsername),
+				url.QueryEscape(opts.ProxyPassword),
+				opts.ProxyHost, opts.ProxyPort)
+		}
+		proxyURL, err := url.Parse(proxyStr)
 		if err == nil {
 			transport.Proxy = http.ProxyURL(proxyURL)
 		} else {
@@ -959,6 +970,11 @@ func (m *Manager) userAgent(opts CollectOptions) string {
 	return "Mozilla/5.0 (compatible; LiveSourceManager/1.0)"
 }
 
+// maxSourceBodyBytes caps how much data we read from a single source URL to
+// prevent memory exhaustion from oversized or malicious responses. 50 MB is
+// more than enough for any legitimate M3U/TXT playlist.
+const maxSourceBodyBytes = 50 * 1024 * 1024
+
 func (m *Manager) httpGetString(client *http.Client, ctx context.Context, u, ua, token string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -977,7 +993,7 @@ func (m *Manager) httpGetString(client *http.Client, ctx context.Context, u, ua,
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, u)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSourceBodyBytes))
 	if err != nil {
 		return "", err
 	}
@@ -1002,7 +1018,7 @@ func (m *Manager) httpGetJSON(client *http.Client, ctx context.Context, u string
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API HTTP %d: %s", resp.StatusCode, u)
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSourceBodyBytes))
 	if err != nil {
 		return nil, err
 	}

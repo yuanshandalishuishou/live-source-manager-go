@@ -244,9 +244,15 @@ func (s *Server) hValidateConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hReloadConfig(w http.ResponseWriter, r *http.Request) {
-	_ = db.GetAllConfig(s.conn)
-	s.audit(r, "config_reload", "SQLite", "")
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "配置重载完成", "reloaded": 1})
+	// Config is read live from SQLite on every Get() call — there is no
+	// in-memory cache to invalidate. This endpoint exists for UI parity with
+	// the Python version and confirms the DB is readable (L14 fix: previously
+	// called db.GetAllConfig but discarded the result, implying a reload
+	// happened when nothing actually changed).
+	all := db.GetAllConfig(s.conn)
+	sections := len(all)
+	s.audit(r, "config_reload", "SQLite", "配置重载确认（直读模式，无缓存）")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "配置重载完成", "sections": sections})
 }
 
 func toStrVal(v any) string {

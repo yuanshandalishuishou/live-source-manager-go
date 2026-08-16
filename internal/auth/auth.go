@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -76,10 +77,12 @@ func subtleEqual(a, b string) bool {
 }
 
 // fallbackToken derives a pseudo-random hex string without crypto/rand.
+// Uses time-derived entropy instead of a deterministic sequence (L13 fix).
 func fallbackToken(nBytes int) string {
 	b := make([]byte, nBytes)
+	now := uint64(time.Now().UnixNano())
 	for i := range b {
-		b[i] = byte(i*31 + 7)
+		b[i] = byte(now>>(uint(i)*8)) ^ byte(i*37+13)
 	}
 	return hex.EncodeToString(b)
 }

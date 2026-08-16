@@ -168,10 +168,15 @@ func (s *Server) hDashStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hDashSystem(w http.ResponseWriter, r *http.Request) {
+	net := s.cfg.GetNetworkConfig()
+	// Mask secrets — same as hGetNetwork (H2 fix).
+	net["github_token"] = ""
+	net["proxy_password"] = ""
+	net["proxy_username"] = ""
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"system":  s.systemInfoMap(),
-		"network": s.cfg.GetNetworkConfig(),
+		"network": net,
 	})
 }
 
