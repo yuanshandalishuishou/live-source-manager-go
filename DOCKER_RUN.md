@@ -8,6 +8,8 @@
 
 > 仅记录影响部署 / 行为的关键变更，完整提交见 `git log`。
 
+- **2026-08-16** — 16 项安全审计修复（commit `4cfe76d`）。
+  CSRF 中间件保护、敏感字段掩码、代理认证、响应体大小限制(50MB/2MB)、M3U 属性转义、Cookie Secure 标志、logout CSRF 清理、EPG daily 补刷、配置默认值扩展至 84 键等。不影响部署流程，但提升了运行时安全性。
 - **2026-07-18** — 默认管理员初始密码改为 `Admin@123`（commit `2f93ff0`）。
   `ensureAdmin` 在未设置 `WEB_ADMIN_PASSWORD` / `LSM_ADMIN_PASSWORD` 时，**不再随机生成**，改用固定默认 `Admin@123`（与历史 Python 部署习惯一致）；环境变量仍可覆盖，启动时仍打印 `ADMIN_PASSWORD_INITIALIZED=Admin@123`。
   **仅影响全新部署**（库内无用户时）。已存在用户不受影响，本地库已手动重置为 `Admin@123`。
