@@ -2,7 +2,6 @@ package web
 
 import (
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -53,9 +52,17 @@ func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 	ks := sectionKeySet()
 	optsMap := config.FieldOptions()
 	secMap := config.SecretKeys()
+	meta := config.FieldMeta()
+	optLabels := config.OptionLabels()
+	titles := config.SectionTitles()
+	order := config.SectionOrder()
 	fields := map[string]map[string]map[string]any{}
 	secs := []string{}
-	for sec, keys := range ks {
+	for _, sec := range order {
+		keys, ok := ks[sec]
+		if !ok {
+			continue
+		}
 		secs = append(secs, sec)
 		fields[sec] = map[string]map[string]any{}
 		for key := range keys {
@@ -74,18 +81,33 @@ func (s *Server) hGetConfigFields(w http.ResponseWriter, r *http.Request) {
 			} else {
 				val = s.cfg.Get(sec, key, "")
 			}
-			fields[sec][key] = map[string]any{
+			options := optsMap[dk]
+			field := map[string]any{
 				"type":    inferType(def),
 				"default": def,
 				"value":   val,
-				"options": optsMap[dk],
+				"options": options,
 				"secret":  secMap[dk],
 				"set":     set,
 			}
+			if fi, ok := meta[dk]; ok {
+				field["label"] = fi.Label
+				field["description"] = fi.Description
+			}
+			if options != nil {
+				if ol, ok := optLabels[dk]; ok {
+					field["option_labels"] = ol
+				}
+			}
+			fields[sec][key] = field
 		}
 	}
-	sort.Strings(secs)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sections": secs, "fields": fields})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":            true,
+		"sections":      secs,
+		"fields":        fields,
+		"section_titles": titles,
+	})
 }
 
 func (s *Server) hGetConfigHistory(w http.ResponseWriter, r *http.Request) {

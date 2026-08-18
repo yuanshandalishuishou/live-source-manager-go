@@ -178,6 +178,223 @@ func SecretKeys() map[string]bool {
 	}
 }
 
+// FieldInfo carries the Chinese display metadata for a single config key.
+// Label is the human-readable field name shown in the UI; Description is a
+// short hint explaining the field's purpose.
+type FieldInfo struct {
+	Label       string
+	Description string
+}
+
+// SectionTitles maps each config section to its Chinese title.
+func SectionTitles() map[string]string {
+	return map[string]string{
+		"Sources":    "源管理",
+		"Network":    "网络代理",
+		"HTTPServer": "HTTP 服务",
+		"GitHub":     "GitHub 源",
+		"Testing":    "探测测试",
+		"Tools":      "工具路径",
+		"Output":     "输出设置",
+		"Filter":     "过滤规则",
+		"Logging":    "日志",
+		"Session":    "会话安全",
+		"UserAgents": "User-Agent",
+		"Referrers":  "Referer",
+		"EPG":        "电子节目单（EPG）",
+	}
+}
+
+// SectionOrder returns the logical display order of config sections.
+func SectionOrder() []string {
+	return []string{
+		"Sources",
+		"Network",
+		"HTTPServer",
+		"GitHub",
+		"Testing",
+		"Tools",
+		"Output",
+		"Filter",
+		"Logging",
+		"Session",
+		"UserAgents",
+		"Referrers",
+		"EPG",
+	}
+}
+
+// FieldMeta maps "Section.key" to its Chinese label and description.
+func FieldMeta() map[string]FieldInfo {
+	return map[string]FieldInfo{
+		// [Sources]
+		"Sources.local_dirs":            {Label: "本地源目录", Description: "本地存放 M3U/TXT 源文件的目录，多个用逗号分隔。"},
+		"Sources.online_urls":           {Label: "在线源地址", Description: "在线 M3U 源地址列表，每行一个。"},
+		"Sources.github_sources":        {Label: "GitHub 源仓库", Description: "从 GitHub 拉取的源仓库，格式为 owner/repo 或 owner/repo/branch。"},
+		"Sources.github_source_settings": {Label: "GitHub 源高级设置", Description: "针对各 GitHub 源的覆盖设置（JSON 格式）。"},
+		"Sources.source_file_ua_settings": {Label: "源文件 UA 设置", Description: "为不同源文件指定 User-Agent（JSON 格式）。"},
+		"Sources.channel_ua_overrides":  {Label: "频道 UA 覆盖", Description: "为指定频道覆盖 User-Agent（JSON 格式）。"},
+		"Sources.source_file_referer_settings": {Label: "源文件 Referer 设置", Description: "为不同源文件指定 Referer（JSON 格式）。"},
+		"Sources.channel_referer_overrides": {Label: "频道 Referer 覆盖", Description: "为指定频道覆盖 Referer（JSON 格式）。"},
+		// [Network]
+		"Network.proxy_enabled":  {Label: "启用代理", Description: "开启后所有对外请求（GitHub、在线源）走代理。"},
+		"Network.proxy_type":     {Label: "代理类型", Description: "代理协议类型。"},
+		"Network.proxy_host":     {Label: "代理主机", Description: "代理服务器地址。"},
+		"Network.proxy_port":     {Label: "代理端口", Description: "代理服务器端口。"},
+		"Network.proxy_username": {Label: "代理用户名", Description: "代理认证用户名（留空表示无需认证）。"},
+		"Network.proxy_password": {Label: "代理密码", Description: "代理认证密码（留空表示无需认证）。"},
+		"Network.github_mirror":  {Label: "GitHub 镜像", Description: "加速 GitHub 访问的反向代理地址。"},
+		"Network.ipv6_enabled":   {Label: "启用 IPv6", Description: "允许探测与输出 IPv6 源。"},
+		// [HTTPServer]
+		"HTTPServer.enabled":        {Label: "启用内置服务器", Description: "启动内置的文件发布与管理 Web 服务。"},
+		"HTTPServer.host":           {Label: "监听地址", Description: "服务绑定的网络地址，0.0.0.0 表示监听所有网卡。"},
+		"HTTPServer.fileshare_port": {Label: "文件发布端口", Description: "对外提供 M3U/EPG 文件下载的端口。"},
+		"HTTPServer.manager_port":   {Label: "管理端口", Description: "后台管理界面的访问端口。"},
+		"HTTPServer.document_root":  {Label: "文件根目录", Description: "文件发布服务对外暴露的根目录。"},
+		// [GitHub]
+		"GitHub.api_url":    {Label: "API 地址", Description: "GitHub REST API 基地址。"},
+		"GitHub.api_token":  {Label: "访问令牌", Description: "带 repo 权限的个人访问令牌（PAT），用于鉴权与提升限额。"},
+		"GitHub.rate_limit": {Label: "速率限制", Description: "GitHub API 每小时请求上限。"},
+		// [Testing]
+		"Testing.timeout":                  {Label: "探测超时", Description: "单次探测的最长等待时间（秒）。"},
+		"Testing.concurrent_threads":       {Label: "并发线程数", Description: "同时探测的源数量。"},
+		"Testing.max_concurrent_ffprobe":   {Label: "最大 ffprobe 并发", Description: "ffprobe 进程的最大并发数。"},
+		"Testing.cache_ttl":                {Label: "缓存有效期", Description: "探测结果缓存时间（秒）。"},
+		"Testing.enable_speed_test":        {Label: "启用测速", Description: "探测时测量源的实际速度。"},
+		"Testing.speed_test_duration":      {Label: "测速时长", Description: "每个源测速采样的持续时间（秒）。"},
+		"Testing.auto_scan_enabled":        {Label: "启用自动探测", Description: "按计划周期性自动执行源探测。"},
+		"Testing.auto_scan_mode":           {Label: "自动探测模式", Description: "按固定间隔还是每日固定时间触发。"},
+		"Testing.auto_scan_interval_hours": {Label: "间隔小时数", Description: "间隔模式下两次探测的间隔（小时）。"},
+		"Testing.auto_scan_daily_time":     {Label: "每日探测时间", Description: "每日模式下触发探测的本地时间（HH:MM）。"},
+		"Testing.enable_host_speed_share":  {Label: "启用主机测速共享", Description: "向社区共享本机测速结果以加速其他用户探测。"},
+		"Testing.enable_source_freeze":     {Label: "启用源冻结", Description: "连续失败的源将被临时冻结，避免反复无效探测。"},
+		"Testing.freeze_fail_threshold":    {Label: "冻结失败阈值", Description: "达到该失败次数后冻结源。"},
+		"Testing.freeze_base_seconds":      {Label: "冻结基准秒数", Description: "冻结的基础时长（秒）。"},
+		"Testing.freeze_max_hours":         {Label: "冻结最大小时", Description: "冻结的最长持续时间（小时）。"},
+		"Testing.enable_ad_detect":         {Label: "启用广告检测", Description: "根据关键词识别并剔除广告/测试卡频道。"},
+		"Testing.ad_keywords":              {Label: "广告关键词", Description: "用于广告识别的关键词，逗号分隔。"},
+		"Testing.ad_max_duration":          {Label: "广告最大时长", Description: "判定为广告片段的最大时长（秒）。"},
+		"Testing.global_blacklist":         {Label: "全局黑名单", Description: "全局强制排除的频道/源关键词，逗号分隔。"},
+		"Testing.global_whitelist":         {Label: "全局白名单", Description: "全局强制保留的频道/源关键词，逗号分隔。"},
+		"Testing.output_sort_by":           {Label: "输出排序方式", Description: "生成 M3U 时频道内源的排序依据。"},
+		"Testing.max_test_attempts":        {Label: "最大探测次数", Description: "单个源失败前的重试次数。"},
+		// [Tools]
+		"Tools.ffmpeg_dir": {Label: "ffmpeg 目录", Description: "ffmpeg/ffprobe 可执行文件所在目录（留空则使用系统 PATH）。"},
+		// [Output]
+		"Output.filename":                {Label: "输出文件名", Description: "生成的 M3U 播放列表文件名。"},
+		"Output.group_by":                {Label: "分组方式", Description: "频道在播放列表中的分组维度。"},
+		"Output.include_failed":          {Label: "包含失败源", Description: "即使探测失败也保留该源。"},
+		"Output.max_sources_per_channel": {Label: "每频道最大源数", Description: "单个频道最多保留的源数量。"},
+		"Output.enable_filter":           {Label: "启用过滤", Description: "按过滤规则剔除不达标源。"},
+		"Output.whitelist_force_keep":    {Label: "白名单强制保留", Description: "白名单中的频道即便不达标也强制保留。"},
+		"Output.output_dir":              {Label: "输出目录", Description: "生成文件（M3U/EPG）的写入目录。"},
+		// [Filter]
+		"Filter.max_latency":            {Label: "最大延迟", Description: "超过该延迟（毫秒）的源将被过滤。"},
+		"Filter.min_bitrate":            {Label: "最小码率", Description: "低于该码率（Kbps）的源将被过滤。"},
+		"Filter.must_hd":                {Label: "必须高清", Description: "仅保留高清及以上分辨率的源。"},
+		"Filter.must_4k":                {Label: "必须 4K", Description: "仅保留 4K 分辨率的源。"},
+		"Filter.min_speed":              {Label: "最小速度", Description: "低于该速度（KB/s）的源将被过滤。"},
+		"Filter.min_resolution":         {Label: "最小分辨率", Description: "低于该分辨率的源将被过滤。"},
+		"Filter.max_resolution":         {Label: "最大分辨率", Description: "高于该分辨率的源将被过滤。"},
+		"Filter.resolution_filter_mode": {Label: "分辨率过滤模式", Description: "区间/最小/最大三种过滤策略。"},
+		// [Logging]
+		"Logging.level":        {Label: "日志级别", Description: "记录日志的最低级别。"},
+		"Logging.file":         {Label: "日志文件", Description: "日志写入的文件路径。"},
+		"Logging.max_size":     {Label: "单文件最大体积", Description: "单个日志文件达到该体积（MB）后滚动。"},
+		"Logging.backup_count": {Label: "备份数量", Description: "保留的历史日志文件份数。"},
+		// [Session]
+		"Session.idle_timeout": {Label: "空闲超时", Description: "无操作多少秒后会话失效。"},
+		"Session.session_ttl":  {Label: "会话有效期", Description: "会话从登录起的最长存活时间（秒）。"},
+		// [UserAgents]
+		"UserAgents.ua_position": {Label: "UA 注入位置", Description: "User-Agent 注入到 EXTINF 属性还是 URL 后缀。"},
+		"UserAgents.ua_enabled":  {Label: "启用 UA 注入", Description: "为源请求附加 User-Agent 头。"},
+		// [Referrers]
+		"Referrers.referer_enabled":  {Label: "启用 Referer 注入", Description: "为源请求附加 Referer 头。"},
+		"Referrers.referer_position": {Label: "Referer 注入位置", Description: "Referer 注入到 EXTINF 属性还是 URL 后缀。"},
+		// [EPG]
+		"EPG.enabled":         {Label: "启用 EPG", Description: "抓取并管理电子节目单。"},
+		"EPG.inject_into_m3u": {Label: "注入到 M3U", Description: "将 EPG 地址写入生成的播放列表。"},
+		"EPG.output_filename": {Label: "输出文件名", Description: "生成的 EPG 文件名。"},
+		"EPG.refresh_mode":    {Label: "刷新模式", Description: "EPG 的更新触发方式。"},
+		"EPG.refresh_at":      {Label: "每日刷新时间", Description: "每日模式下刷新 EPG 的本地时间（HH:MM）。"},
+		"EPG.refresh_minutes": {Label: "间隔刷新分钟", Description: "间隔模式下两次刷新的间隔（分钟）。"},
+		"EPG.timezone":        {Label: "时区", Description: "EPG 节目时间使用的时区。"},
+		"EPG.keep_days":       {Label: "保留天数", Description: "EPG 数据保留的天数。"},
+		"EPG.past_hours":      {Label: "过去小时数", Description: "一并保留的过去节目小时数。"},
+		"EPG.fetch_timeout":   {Label: "抓取超时", Description: "单次 EPG 抓取的最长等待时间（秒）。"},
+		"EPG.max_concurrent":  {Label: "最大并发", Description: "EPG 抓取的最大并发数。"},
+		"EPG.web_base_url":    {Label: "Web 基地址", Description: "对外暴露 EPG 的 Web 基地址（留空则自动推断）。"},
+	}
+}
+
+// OptionLabels maps "Section.key" to a value->Chinese-label map for the fixed
+// choices rendered as <select> in the UI.
+func OptionLabels() map[string]map[string]string {
+	return map[string]map[string]string{
+		"Network.proxy_type": {
+			"socks5": "SOCKS5",
+			"http":   "HTTP",
+		},
+		"Testing.auto_scan_mode": {
+			"interval": "固定间隔",
+			"daily":    "每日定时",
+		},
+		"Testing.output_sort_by": {
+			"speed":      "速度",
+			"resolution": "分辨率",
+			"name":       "名称",
+		},
+		"Output.group_by": {
+			"category": "分类",
+			"source":   "来源",
+			"country":  "国家",
+			"name":     "名称",
+		},
+		"Filter.resolution_filter_mode": {
+			"range": "区间",
+			"min":   "最小值",
+			"max":   "最大值",
+		},
+		"Filter.min_resolution": {
+			"240p":  "240p（标清）",
+			"360p":  "360p",
+			"480p":  "480p（标清）",
+			"720p":  "720p（高清）",
+			"1080p": "1080p（全高清）",
+			"1440p": "1440p（2K）",
+			"4k":    "4K（超高清）",
+		},
+		"Filter.max_resolution": {
+			"240p":  "240p（标清）",
+			"360p":  "360p",
+			"480p":  "480p（标清）",
+			"720p":  "720p（高清）",
+			"1080p": "1080p（全高清）",
+			"1440p": "1440p（2K）",
+			"4k":    "4K（超高清）",
+		},
+		"UserAgents.ua_position": {
+			"extinf": "EXTINF 属性",
+			"url":    "URL 后缀",
+		},
+		"Referrers.referer_position": {
+			"extinf": "EXTINF 属性",
+			"url":    "URL 后缀",
+		},
+		"Logging.level": {
+			"DEBUG":   "调试（DEBUG）",
+			"INFO":    "信息（INFO）",
+			"WARNING": "警告（WARNING）",
+			"ERROR":   "错误（ERROR）",
+		},
+		"EPG.refresh_mode": {
+			"daily":   "每日定时",
+			"interval": "固定间隔",
+			"manual":  "手动",
+		},
+	}
+}
+
 // Config reads/writes configuration from the SQLite app_config table.
 type Config struct {
 	conn *sql.DB

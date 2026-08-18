@@ -683,27 +683,34 @@
     function renderCfgField(sec, k, field, curVal) {
       const typ = field && field.type ? field.type : "string";
       const opts = field && field.options ? field.options : null;
+      const optLabels = (field && field.option_labels) ? field.option_labels : null;
       const secret = !!(field && field.secret);
+      const label = (field && field.label) ? field.label : k;
+      const desc = (field && field.description) ? field.description : "";
       const fv = (field && field.value != null && field.value !== "") ? field.value : "";
       const val = (curVal != null && curVal !== "") ? curVal : ((field && field.default != null) ? field.default : "");
       const id = "cfg-" + sec + "-" + k;
+      const labelHtml = `<span class="cfg-label" style="min-width:220px;display:flex;flex-direction:column;gap:2px;"><span style="font-weight:600;">${esc(label)}</span>${desc ? `<span class="muted" style="font-size:12px;line-height:1.4;">${esc(desc)}</span>` : ""}</span>`;
       if (secret) {
         const set = (curVal != null && curVal !== "") || fv !== "" || (field && field.set);
         const ph = set ? "（已保存，留空或 ******** 表示不修改）" : "（未设置）";
         const initVal = set ? "********" : "";
-        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="password" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" data-secret="1" value="${esc(initVal)}" placeholder="${esc(ph)}"></label>`;
+        return `<label class="row" style="margin:8px 0;align-items:flex-start;">${labelHtml}<input class="input" type="password" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" data-secret="1" value="${esc(initVal)}" placeholder="${esc(ph)}"></label>`;
       }
       if (typ === "bool") {
         const checked = ("" + val) === "True" || ("" + val) === "true" || ("" + val) === "1" ? "checked" : "";
-        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input type="checkbox" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" ${checked}></label>`;
+        return `<label class="row" style="margin:8px 0;align-items:flex-start;">${labelHtml}<input type="checkbox" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" ${checked}></label>`;
       }
       if (opts && opts.length) {
         const cur = "" + val;
-        const optsHtml = opts.map((o) => `<option value="${esc(o)}"${o === cur ? " selected" : ""}>${esc(o)}</option>`).join("");
-        return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><select class="input" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}">${optsHtml}</select></label>`;
+        const optsHtml = opts.map((o) => {
+          const ol = (optLabels && optLabels[o]) ? optLabels[o] : o;
+          return `<option value="${esc(o)}"${o === cur ? " selected" : ""}>${esc(ol)}</option>`;
+        }).join("");
+        return `<label class="row" style="margin:8px 0;align-items:flex-start;">${labelHtml}<select class="input" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}">${optsHtml}</select></label>`;
       }
       const inputType = (typ === "int" || typ === "float") ? "number" : "text";
-      return `<label class="row" style="margin:6px 0;"><span class="muted" style="min-width:160px;">${esc(k)}</span><input class="input" type="${inputType}" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" value="${esc(val)}"></label>`;
+      return `<label class="row" style="margin:8px 0;align-items:flex-start;">${labelHtml}<input class="input" type="${inputType}" id="${id}" data-sec="${esc(sec)}" data-key="${esc(k)}" value="${esc(val)}"></label>`;
     }
 
     function bindGithubTest() {
@@ -731,15 +738,17 @@
     async function load() {
       const [f, v] = await Promise.all([api("GET", "/api/config/fields"), api("GET", "/api/config")]);
       fields = f.data.fields || f.data || {}; values = v.data || {};
-      const secs = Object.keys(fields).length ? fields : values;
-      $("#cfg-form").innerHTML = Object.keys(secs).map((sec) => {
+      const secs = (f.data.sections && f.data.sections.length) ? f.data.sections : Object.keys(fields);
+      const titles = f.data.section_titles || {};
+      $("#cfg-form").innerHTML = secs.map((sec) => {
         const fv = fields[sec] || {}; const vv = values[sec] || {};
         const items = Object.keys(fv).length ? fv : vv;
+        const secTitle = titles[sec] || sec;
         // GitHub 段追加「测试 Token」按钮，让用户填完即可就地验证
         const extra = sec === "GitHub"
           ? `<div style="margin-top:8px;display:flex;align-items:center;gap:8px"><button type="button" class="btn primary" id="cfg-github-test">测试 GitHub Token</button><span id="cfg-github-msg" class="msg"></span></div>`
           : "";
-        return `<div class="card"><h3>${esc(sec)}</h3>${Object.keys(items).map((k) => renderCfgField(sec, k, items[k], vv[k])).join("")}${extra}</div>`;
+        return `<div class="card"><h3>${esc(secTitle)}</h3>${Object.keys(items).map((k) => renderCfgField(sec, k, items[k], vv[k])).join("")}${extra}</div>`;
       }).join("") || '<div class="muted">无配置</div>';
       bindGithubTest();
     }
