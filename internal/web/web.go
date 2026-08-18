@@ -5,14 +5,17 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"html/template"
 	"io"
-	"io/fs"
+	"mime"
 	"net"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -257,15 +260,53 @@ func compilePattern(pattern string) (*regexp.Regexp, []string) {
 	return regexp.MustCompile(sb.String()), names
 }
 
+// staticETag caches content-based ETags so we don't hash on every request.
+var staticETag sync.Map // relPath -> etag string
+
+// serveStatic serves embedded static assets with a content-hash ETag and
+// "no-cache", so browsers always revalidate. embed.FS files have a zero
+// modtime; the default http.FileServer therefore emits no Last-Modified/ETag,
+// and browsers heuristically cache stale JS forever. This fixes that.
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	rel := strings.Trim(strings.TrimPrefix(r.URL.Path, "/static/"), "/")
+	if rel == "" || strings.Contains(rel, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := staticFS.ReadFile("static/" + rel)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	var etag string
+	if v, ok := staticETag.Load(rel); ok {
+		etag = v.(string)
+	} else {
+		sum := sha256.Sum256(data)
+		etag = `"` + hex.EncodeToString(sum[:8]) + `"`
+		staticETag.Store(rel, etag)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	ct := mime.TypeByExtension(filepath.Ext(rel))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
 // ServeHTTP is the master handler: recover + log + session + static + route + auth/CSRF.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer s.recoverPanic(w, r)
 
 	if strings.HasPrefix(r.URL.Path, "/static/") {
-		sub, err := fs.Sub(staticFS, "static")
-		if err == nil {
-			http.StripPrefix("/static/", http.FileServer(http.FS(sub))).ServeHTTP(w, r)
-		}
+		s.serveStatic(w, r)
 		return
 	}
 
