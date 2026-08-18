@@ -223,24 +223,45 @@ func (s *Server) hCollectSources(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// hGenerateM3U triggers a one-shot pipeline run that collects sources and writes
-// the M3U file to the configured output dir (www/output/live.m3u by default).
+// hGenerateM3U triggers an async one-shot pipeline run that collects sources and
+// writes the M3U file to the configured output dir (www/output/live.m3u by default).
 // Unlike /api/sources/collect (which only refreshes the in-memory channel cache),
 // this actually produces the published file served on the fileshare port.
+//
+// The run happens in the background (probing 8000+ streams can take minutes), so
+// this handler returns immediately with the task id; the web UI polls
+// GET /api/sources/generate/status to follow progress.
 func (s *Server) hGenerateM3U(w http.ResponseWriter, r *http.Request) {
-	rep, err := s.mgr.Generate(r.Context())
+	id, err := s.mgr.GenerateAsync()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"ok":    false,
-			"error": "生成 M3U 失败: " + err.Error(),
+			"error": "启动生成任务失败: " + err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":      true,
+		"task_id": id,
+		"message": "已启动生成任务，请轮询 /api/sources/generate/status 获取进度",
+	})
+}
+
+// hGetGenerateStatus returns the current/last async generation task state.
+func (s *Server) hGetGenerateStatus(w http.ResponseWriter, r *http.Request) {
+	task, ok := s.mgr.GetGenerateStatus()
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"running": false,
+			"message": "尚无生成任务",
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"collected":   rep.Collected,
-		"classified":  rep.Classified,
-		"output_path": rep.OutputPath,
+		"ok":      true,
+		"running": task.Status == "running" || task.Status == "canceling",
+		"task":    task,
 	})
 }
 

@@ -604,6 +604,48 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = "采集所有源"; loadSourceFiles(); }, 5000);
     }
 
+    async function generateM3U() {
+      const btn = $("#btn-generate-m3u");
+      btn.disabled = true; btn.textContent = "生成中…";
+      const r = await api("POST", "/api/sources/generate");
+      if (!r.ok) {
+        toast(r.data.error || "启动生成失败", "error");
+        btn.disabled = false; btn.textContent = "生成 live.m3u（仅有效源）";
+        return;
+      }
+      toast("已启动生成任务：" + (r.data.message || ""), "info");
+      pollGenerateStatus(btn);
+    }
+
+    let _genPollTimer = null;
+    async function pollGenerateStatus(btn) {
+      if (_genPollTimer) clearInterval(_genPollTimer);
+      const statusEl = $("#generate-status");
+      _genPollTimer = setInterval(async () => {
+        const r = await api("GET", "/api/sources/generate/status");
+        if (!r.ok || !r.data.task) return;
+        const t = r.data.task;
+        const phaseText = { collect: "采集", classify: "分类", test: "测试", generate: "生成" }[t.phase] || t.phase;
+        if (t.status === "running" || t.status === "canceling") {
+          const p = t.progress || {};
+          const pct = p.percent || 0;
+          btn.textContent = t.status === "canceling" ? "取消中…" : `生成中 ${pct}%`;
+          if (statusEl) statusEl.textContent = `阶段:${phaseText} 进度:${p.completed || 0}/${p.total || 0} 成功:${p.success || 0} 失败:${p.failed || 0}`;
+        } else if (t.status === "done") {
+          clearInterval(_genPollTimer); _genPollTimer = null;
+          btn.disabled = false; btn.textContent = "生成 live.m3u（仅有效源）";
+          if (statusEl) statusEl.textContent = `完成: 成功 ${t.progress.success} / 失败 ${t.progress.failed}，输出 ${t.output_path}`;
+          toast("live.m3u 已生成（仅有效源）", "success");
+          loadSourceFiles();
+        } else if (t.status === "error") {
+          clearInterval(_genPollTimer); _genPollTimer = null;
+          btn.disabled = false; btn.textContent = "生成 live.m3u（仅有效源）";
+          if (statusEl) statusEl.textContent = "生成失败: " + t.error;
+          toast("生成失败: " + t.error, "error");
+        }
+      }, 1500);
+    }
+
     // ── 绑定工具栏 ──
     $("#btn-add-file").onclick = window.showAddFileForm;
     $("#btn-add-close").onclick = window.hideAddFileForm;
@@ -614,6 +656,7 @@
     $("#btn-close-channels").onclick = closeChannels;
     $("#channels-search").oninput = channelsSearchDebounced;
     if ($("#btn-collect")) $("#btn-collect").onclick = collectAllSources;
+    if ($("#btn-generate-m3u")) $("#btn-generate-m3u").onclick = generateM3U;
 
     await loadCategoryDictionary();
     loadSourceFiles();

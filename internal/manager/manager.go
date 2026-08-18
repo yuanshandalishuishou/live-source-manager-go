@@ -46,6 +46,15 @@ type Manager struct {
 	// schedCancel stops the auto-scan scheduler loop.
 	schedCancel context.CancelFunc
 
+	// genMu / genTask track the single in-flight one-shot generation
+	// ("generate live.m3u") so the web UI can trigger it without blocking the
+	// HTTP request and poll progress. Only one generation runs at a time; a
+	// second trigger reuses the running task.
+	genMu     sync.Mutex
+	genTask   *GenerateTask
+	genCtx    context.Context
+	genCancel context.CancelFunc
+
 	// collecting guards a single in-flight channel collection so the slow
 	// network fetch never holds cacheMu (which would block PeekChannels readers,
 	// e.g. the source-file list, for the whole collection duration).
@@ -79,9 +88,19 @@ type RunOptions struct {
 	GenerateEnabled bool
 	CollectOpts     source.CollectOptions
 	// ForceInclude keeps every collected channel regardless of test status.
-	// Used by one-shot Generate (which skips the speed test, so channels have
-	// no "success"/"failed" verdict yet and must all be emitted).
+	// Used when the speed test is skipped (no probe binary or disabled), so
+	// channels have no "success"/"failed" verdict yet and must all be emitted.
 	ForceInclude bool
+
+	// TestProgressCB, when set, receives live test progress (only relevant when
+	// TestEnabled is true). Optional; the async web generation uses it to report
+	// percentage to the UI without blocking the HTTP request.
+	TestProgressCB func(types.TestProgress)
+
+	// PhaseCB, when set, is invoked as the pipeline advances through
+	// collect -> classify -> test -> generate. Optional; used by the async web
+	// generation to surface the current phase to the UI.
+	PhaseCB func(phase string)
 }
 
 // Report summarizes a pipeline run.
@@ -107,18 +126,32 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 	channels := coll.Channels
 	rep.Collected = len(channels)
 	logger.L().Info("采集完成：%d 个频道，%d 个源文件", rep.Collected, len(coll.SourceFiles))
+	if opts.PhaseCB != nil {
+		opts.PhaseCB("classify")
+	}
 
 	if err := m.rules.LoadRules(); err != nil {
 		logger.L().Warning("加载分类规则失败：%v", err)
 	}
 	m.rules.Classify(channels)
 	rep.Classified = len(channels)
+	if opts.PhaseCB != nil {
+		if opts.TestEnabled {
+			opts.PhaseCB("test")
+		} else {
+			opts.PhaseCB("generate")
+		}
+	}
 
 	if opts.TestEnabled {
 		params := m.buildTestParams()
-		results := m.test.TestBatch(ctx, channels, params, func(p types.TestProgress) {
-			logger.L().Debug("实时测试进度：%d/%d", p.Completed, p.Total)
-		})
+		cb := opts.TestProgressCB
+		if cb == nil {
+			cb = func(p types.TestProgress) {
+				logger.L().Debug("实时测试进度：%d/%d", p.Completed, p.Total)
+			}
+		}
+		results := m.test.TestBatch(ctx, channels, params, cb)
 		applyTestResults(channels, results)
 		for _, r := range results {
 			if r.Status == "success" {
@@ -137,6 +170,9 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 	refineMediaType(channels)
 
 	if opts.GenerateEnabled {
+		if opts.PhaseCB != nil {
+			opts.PhaseCB("generate")
+		}
 		optsM3U := m.buildM3UOpts()
 		if opts.ForceInclude {
 			optsM3U.IncludeFailed = true
@@ -156,19 +192,162 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 	return rep, nil
 }
 
-// Generate runs the full pipeline once: collect -> classify -> write M3U.
-// It skips the speed test (TestEnabled=false) so the M3U is produced quickly
-// and contains all collected channels regardless of reachability. EPG url-tvg
-// injection is applied inside buildM3UOpts when enabled. This is the one-shot
-// counterpart to the scheduler and is what the web UI / API call to actually
-// produce the published live.m3u file.
+// Generate runs the full pipeline once: collect -> classify -> (test) -> generate.
+// It mirrors Python's hierarchical filtering: when a probe binary (ffprobe/ffmpeg)
+// is available AND Testing.enable_speed_test is enabled, the speed test runs and
+// ONLY channels reaching status == "success" are written to the M3U — failed and
+// untested channels are dropped (m3u.WriteFile honours include_failed=False by
+// default, exactly like Python's valid_sources = [s for s in sources if
+// s.status == 'success']).
+//
+// When no probe binary is present (or the test is disabled) it falls back to
+// emitting every collected channel (ForceInclude=true) so the published file is
+// never empty — preserving the old one-shot behaviour for probe-less deployments.
+// EPG url-tvg injection is applied inside buildM3UOpts when enabled.
 func (m *Manager) Generate(ctx context.Context) (*Report, error) {
+	testEnabled := m.HasTestBinaries() && m.cfg.GetBool("Testing", "enable_speed_test", true)
 	return m.Run(ctx, RunOptions{
-		TestEnabled:     false,
+		TestEnabled:     testEnabled,
 		GenerateEnabled: true,
-		ForceInclude:    true,
+		ForceInclude:    !testEnabled, // 兜底：无测试则强制全包含，避免输出为空
 		CollectOpts:     m.buildCollectOpts(),
 	})
+}
+
+// ── async one-shot generation (web UI) ───────────────────────────────────
+
+// GenerateTask is a tracked async "generate live.m3u" run surfaced to the web UI.
+type GenerateTask struct {
+	ID         string           `json:"id"`
+	StartTime  time.Time        `json:"start_time"`
+	EndTime    time.Time        `json:"end_time,omitempty"`
+	Status     string           `json:"status"` // running | done | error | canceling
+	Phase      string           `json:"phase"`  // collect | classify | test | generate
+	Progress   GenerateProgress `json:"progress"`
+	OutputPath string           `json:"output_path,omitempty"`
+	ErrMsg     string           `json:"error,omitempty"`
+}
+
+// GenerateProgress carries the live counters reported by the async generation.
+type GenerateProgress struct {
+	Phase     string `json:"phase"`
+	Tested    int    `json:"tested"`
+	Success   int    `json:"success"`
+	Failed    int    `json:"failed"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+	Percent   int    `json:"percent"`
+}
+
+// GenerateAsync launches a background "generate live.m3u" run and returns its
+// task id immediately. The web UI polls GetGenerateStatus to follow progress.
+// This avoids blocking the HTTP request while 8000+ streams are probed (which
+// would otherwise time out the API call and cancel the run when the client
+// closes the connection).
+//
+// Only one generation runs at a time; if one is already running, the existing
+// task id is returned and reused.
+func (m *Manager) GenerateAsync() (string, error) {
+	m.genMu.Lock()
+	if m.genTask != nil && m.genTask.Status == "running" {
+		id := m.genTask.ID
+		m.genMu.Unlock()
+		return id, nil
+	}
+	id := auth.GenerateSessionID()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+	task := &GenerateTask{
+		ID:        id,
+		StartTime: time.Now(),
+		Status:    "running",
+		Phase:     "collect",
+	}
+	m.genTask = task
+	m.genCtx = ctx
+	m.genCancel = cancel
+	m.genMu.Unlock()
+
+	go func() {
+		defer cancel()
+		testEnabled := m.HasTestBinaries() && m.cfg.GetBool("Testing", "enable_speed_test", true)
+		rep, err := m.Run(ctx, RunOptions{
+			TestEnabled:     testEnabled,
+			GenerateEnabled: true,
+			ForceInclude:    !testEnabled,
+			CollectOpts:     m.buildCollectOpts(),
+			PhaseCB: func(phase string) {
+				m.genMu.Lock()
+				if m.genTask != nil {
+					m.genTask.Phase = phase
+					m.genTask.Progress.Phase = phase
+				}
+				m.genMu.Unlock()
+			},
+			TestProgressCB: func(p types.TestProgress) {
+				m.genMu.Lock()
+				if m.genTask != nil {
+					m.genTask.Phase = "test"
+					m.genTask.Progress = GenerateProgress{
+						Phase:     "test",
+						Tested:    p.Completed,
+						Success:   p.Success,
+						Failed:    p.Failed,
+						Completed: p.Completed,
+						Total:     p.Total,
+						Percent:   p.Percent,
+					}
+				}
+				m.genMu.Unlock()
+			},
+		})
+		m.genMu.Lock()
+		if m.genTask != nil {
+			if err != nil {
+				m.genTask.Status = "error"
+				m.genTask.ErrMsg = err.Error()
+			} else {
+				m.genTask.Status = "done"
+				m.genTask.Phase = "generate"
+				m.genTask.Progress.Phase = "generate"
+				m.genTask.Progress.Percent = 100
+				m.genTask.Progress.Tested = rep.Tested
+				m.genTask.Progress.Success = rep.Success
+				m.genTask.Progress.Failed = rep.Failed
+				m.genTask.Progress.Completed = rep.Tested
+				m.genTask.Progress.Total = rep.Tested
+				m.genTask.OutputPath = rep.OutputPath
+			}
+			m.genTask.EndTime = time.Now()
+		}
+		m.genMu.Unlock()
+	}()
+	return id, nil
+}
+
+// GetGenerateStatus returns a snapshot of the current/last generation task.
+// The boolean reports whether such a task exists (false only before the first
+// generation is ever triggered).
+func (m *Manager) GetGenerateStatus() (*GenerateTask, bool) {
+	m.genMu.Lock()
+	defer m.genMu.Unlock()
+	if m.genTask == nil {
+		return nil, false
+	}
+	t := *m.genTask
+	return &t, true
+}
+
+// CancelGenerate requests cancellation of a running generation task.
+func (m *Manager) CancelGenerate() {
+	m.genMu.Lock()
+	cancel := m.genCancel
+	if m.genTask != nil && m.genTask.Status == "running" {
+		m.genTask.Status = "canceling"
+	}
+	m.genMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // ── scheduler (auto-scan) ────────────────────────────────────────────────

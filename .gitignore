@@ -24,6 +24,8 @@ tools/ffmpeg/*.dll
 /internal/web/www/
 /config/online/
 /config/sources/
+# 运行时状态文件（EPG 抓取状态等，非源码，勿入库）
+/config/data/
 
 # 本地环境 / 密钥
 .env

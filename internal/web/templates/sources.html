@@ -6,6 +6,8 @@
     {{if .IsAdmin}}
     <button class="btn primary" id="btn-add-file">+ 添加源文件</button>
     <button class="btn" id="btn-collect">采集所有源</button>
+    <button class="btn primary" id="btn-generate-m3u">生成 live.m3u（仅有效源）</button>
+    <span id="generate-status" class="muted" style="font-size:13px"></span>
     {{end}}
     <button class="btn" id="btn-refresh">刷新</button>
   </div>
