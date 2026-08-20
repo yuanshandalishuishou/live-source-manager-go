@@ -144,6 +144,36 @@ func (s *Server) hTestCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已取消"})
 }
 
+// hTestGeneratePlaylist 实现「测完一键落盘」：把本次实时测试中测速通过的源
+// 直接写回 live.m3u，不重跑测试（对齐 Python /api/test/generate-playlist）。
+// 业务校验（会话是否存在、是否已完成、是否有有效源）全部由 manager.GenerateFromTest 完成。
+func (s *Server) hTestGeneratePlaylist(w http.ResponseWriter, r *http.Request) {
+	m := decodeBody(r)
+	sid := strField(m, "session_id")
+	if sid == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "session_id 不能为空"})
+		return
+	}
+	files, count, err := s.mgr.GenerateFromTest(sid)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	primary := ""
+	if len(files) > 0 {
+		primary = files[0]
+	}
+	s.audit(r, "test_generate_playlist", strings.Join(files, ","),
+		fmt.Sprintf("基于实时测试结果落盘，%d 个有效源 -> %s", count, strings.Join(files, ", ")))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"path":    primary,
+		"files":   files,
+		"valid":   count,
+		"message": fmt.Sprintf("已将本次测试通过的 %d 个有效源写入 %s", count, strings.Join(files, ", ")),
+	})
+}
+
 func (s *Server) hTestStatus(w http.ResponseWriter, r *http.Request) {
 	sid := r.URL.Query().Get("session_id")
 	if sid == "" {

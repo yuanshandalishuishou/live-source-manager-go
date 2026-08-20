@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,18 +175,32 @@ func (m *Manager) Run(ctx context.Context, opts RunOptions) (*Report, error) {
 			opts.PhaseCB("generate")
 		}
 		optsM3U := m.buildM3UOpts()
+		// 计算 valid 集合：探针缺失/测试关闭（ForceInclude）时不过滤 status，
+		// 全部视为有效（保持旧有兜底行为）；否则仅保留测速成功的源。
+		var valid []types.Channel
 		if opts.ForceInclude {
-			optsM3U.IncludeFailed = true
+			valid = channels
+		} else {
+			valid = filterSuccess(channels)
+		}
+		base, qualified := computeBaseQualified(valid, optsM3U.EnableFilter, optsM3U.MaxPerChannel, optsM3U.Filter)
+		// 「输出全部有效源」开关：开启时 live 主文件直接用第一层全部有效源，
+		// 跳过分辨率聚合与质量过滤（与 Python output_all_valid 一致）。
+		live := base
+		if toBool(m.cfg.GetOutputParams()["output_all_valid"]) {
+			live = valid
 		}
 		if err := util.EnsureDir(optsM3U.OutputDir); err != nil {
 			logger.L().Warning("创建输出目录失败：%v", err)
 		}
-		path, err := m3u.WriteFile(channels, optsM3U)
+		files, err := m3u.WriteMultiFiles(m3u.MultiSets{Live: live, Qualified: qualified}, optsM3U)
 		if err != nil {
 			return rep, err
 		}
-		rep.OutputPath = path
-		logger.L().Info("已生成 M3U：%s", path)
+		if len(files) > 0 {
+			rep.OutputPath = util.NormalizePathSeparator(filepath.Join(optsM3U.OutputDir, optsM3U.Filename))
+		}
+		logger.L().Info("已生成 M3U 多文件：%s", strings.Join(files, ", "))
 	}
 
 	rep.DurationMs = time.Since(start).Milliseconds()
@@ -742,6 +757,92 @@ func (m *Manager) GetRealtimeProgress(id string) (*types.TestProgress, map[strin
 	return &p, results, true
 }
 
+// GenerateFromTest writes live.m3u using ONLY the channels that passed the
+// given real-time test session — mirroring Python's "测完一键落盘"
+// (api_test_generate_playlist / generate_from_web_test). It does NOT re-run
+// the probe; it consumes the Results collected during runRealtime.
+//
+// Behaviour:
+//   - session missing -> error (the web UI must keep the session alive, which
+//     it does: runRealtime only marks Progress.Status="done" and never deletes
+//     the session, so Results stay available after the test finishes).
+//   - test not finished (Progress.Status != "done") -> error, refuse to write
+//     a partial playlist.
+//   - only channels whose Result.Status == "success" are kept; each kept
+//     channel's Status + 性能字段 are back-filled from Results so the standard
+//     m3u pipeline (group/sort/EPG) treats them exactly like a normal one-shot
+//     generation.
+//   - enable_filter 主开关被原样继承（与 Python generate_from_web_test 一致）：
+//     开启时 base=按频道+分辨率分组、qualified=质量筛选；关闭时 base/qualified
+//     均等于全部有效源。输出 live.m3u(base) + qualified_live.m3u(qualified) +
+//     live-ipv4.m3u / live-ipv6.m3u（separate_ipv4_ipv6 默认开启）多文件。
+//   - 复用与一次性生成（Run）完全相同的 applyTestResults + refineMediaType +
+//     buildM3UOpts + m3u.WriteMultiFiles 路径；EPG url-tvg / TVGInfo / 分组 /
+//     排序 / UA / Referer / 单栈分文件 全部继承，输出形态与源管理生成一致。
+func (m *Manager) GenerateFromTest(id string) (files []string, count int, err error) {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if !ok {
+		m.mu.Unlock()
+		return nil, 0, fmt.Errorf("测试会话不存在或已过期: %s（请重新运行一次实时测试）", id)
+	}
+	s.mu.Lock()
+	channels := make([]types.Channel, len(s.channels))
+	copy(channels, s.channels)
+	resByID := make(map[string]types.TestResult, len(s.Results))
+	resultList := make([]types.TestResult, 0, len(s.Results))
+	for k, v := range s.Results {
+		resByID[k] = v
+		resultList = append(resultList, v)
+	}
+	progressStatus := s.Progress.Status
+	s.mu.Unlock()
+	m.mu.Unlock()
+
+	if progressStatus != "done" {
+		return nil, 0, fmt.Errorf("测试尚未完成（当前状态: %s），无法落盘播放列表", progressStatus)
+	}
+
+	// 仅保留本次测速通过的源（对齐 Python generate_from_web_test：
+	// valid = [s for s in sources if s.status == 'success']）。
+	kept := make([]types.Channel, 0, len(channels))
+	for i := range channels {
+		if r, ok := resByID[channels[i].ID]; ok && r.Status == "success" {
+			kept = append(kept, channels[i])
+		}
+	}
+	if len(kept) == 0 {
+		return nil, 0, fmt.Errorf("本次测试没有可用（status=success）的源，未生成播放列表")
+	}
+
+	// 与一次性生成（Run）完全相同的回填 + 媒体类型精修，确保「测完一键落盘」
+	// 与 Python 版逻辑几乎一致：applyTestResults 回填性能字段并设置 IsQualified；
+	// refineMediaType 按有无视频流细分 radio/audio/video。
+	applyTestResults(kept, resultList)
+	refineMediaType(kept)
+
+	// 继承 enable_filter 主开关（Python 对齐）：开启则 base=按频道+分辨率分组、
+	// qualified=质量筛选；关闭则 base/qualified 均等于全部有效源。
+	// IncludeFailed=false 只落盘测速通过的源。EPG url-tvg / TVGInfo / 分组 /
+	// 排序 / UA / Referer / 单栈分文件 全部来自 buildM3UOpts。
+	opts := m.buildM3UOpts()
+	opts.IncludeFailed = false
+
+	base, qualified := computeBaseQualified(kept, opts.EnableFilter, opts.MaxPerChannel, opts.Filter)
+	// 「输出全部有效源」开关：开启时 live 主文件直接用第一层全部有效源，
+	// 跳过分辨率聚合与质量过滤（与 Python output_all_valid 一致）。
+	live := base
+	if toBool(m.cfg.GetOutputParams()["output_all_valid"]) {
+		live = kept
+	}
+
+	files, err = m3u.WriteMultiFiles(m3u.MultiSets{Live: live, Qualified: qualified}, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	return files, len(kept), nil
+}
+
 func (m *Manager) runRealtime(ctx context.Context, s *RealtimeSession) {
 	concurrency := s.params.Concurrent
 	if concurrency < 1 {
@@ -897,6 +998,9 @@ func (m *Manager) buildM3UOpts() m3u.Options {
 		UAPosition:         m.cfg.GetUAPosition(),
 		RefererEnabled:     m.cfg.GetReferrerEnabled(),
 		RefererPosition:    m.cfg.GetReferrerPosition(),
+		SeparateIPv4IPv6:   toBool(op["separate_ipv4_ipv6"]),
+		IPv4Filename:       toStr(op["ipv4_filename"]),
+		IPv6Filename:       toStr(op["ipv6_filename"]),
 	}
 }
 
@@ -919,6 +1023,34 @@ func applyTestResults(channels []types.Channel, results []types.TestResult) {
 			channels[i].IsQualified = r.Status == "success"
 		}
 	}
+}
+
+// filterSuccess keeps only channels whose Status == "success" (Python 第一层
+// 有效性测试：valid = [s for s in sources if s.status == 'success'])。
+func filterSuccess(channels []types.Channel) []types.Channel {
+	out := make([]types.Channel, 0, len(channels))
+	for _, c := range channels {
+		if c.Status == "success" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// computeBaseQualified mirrors Python hierarchical_filtering:
+//   - valid     = 仅 status==success 的源（由调用方先行过滤后传入）
+//   - base      = 按频道+分辨率分组、每组保留质量最好的前 N（resolution_based_filtering）
+//   - qualified = 对 base 应用质量过滤（condition_based_filtering）
+//
+// enable_filter 主开关关闭时，base 与 qualified 均等于传入的 valid（不应用
+// 任何分层筛选），等价于「关闭过滤」，与 Python 行为一致。
+func computeBaseQualified(valid []types.Channel, enableFilter bool, maxPerChannel int, filter map[string]any) (base, qualified []types.Channel) {
+	if !enableFilter {
+		return valid, valid
+	}
+	base = m3u.ResolutionBasedGrouping(valid, maxPerChannel)
+	qualified = m3u.FilterQualified(base, filter)
+	return base, qualified
 }
 
 // refineMediaType 端口自 Python manager.classify_media_type / _refine_audio_type。

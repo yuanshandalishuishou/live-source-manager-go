@@ -1164,6 +1164,7 @@
     async function trigger() {
       const scope = $("#test-scope") ? $("#test-scope").value : "all";
       const fileId = (scope === "online" && $("#test-file-select")) ? $("#test-file-select").value : "";
+      hideGenerateBtn();
       if (scope === "online" && !fileId) {
         status.textContent = "请先选择要测试的在线源文件";
         toast("请先选择在线源文件", "error");
@@ -1205,12 +1206,52 @@
         renderErrorBreakdown(lastBreakdown);
         renderResults(lastResults);
         if (p.status === "done" || p.status === "canceling") { es.close(); }
+        // 测试正常完成且存在有效源时，展示「一键落盘」按钮
+        if (p.status === "done" && (p.success || 0) > 0) { showGenerateBtn(); }
       };
     }
+
+    function showGenerateBtn() {
+      const btn = $("#test-generate");
+      if (btn) btn.style.display = "";
+    }
+    function hideGenerateBtn() {
+      const btn = $("#test-generate");
+      if (btn) { btn.style.display = "none"; btn.disabled = false; btn.textContent = "生成 live.m3u（仅有效源）"; }
+    }
+    // 测完一键落盘：用本次测速通过的源直接写 live.m3u，不重跑测试（对齐 Python 版）
+    async function generatePlaylist() {
+      const btn = $("#test-generate");
+      if (btn) { btn.disabled = true; btn.textContent = "生成中…"; }
+      try {
+        const r = await api("POST", "/api/test/generate-playlist", { session_id: sessionId });
+        if (!r.ok) {
+          const err = (r.data && r.data.error) || "生成失败";
+          toast(err, "error");
+          status.textContent = err;
+        } else {
+          const msg = (r.data && r.data.message) || "已生成播放列表";
+          const files = (r.data && r.data.files) || [];
+          let detail = msg;
+          if (files.length) {
+            detail += "（" + files.join("、") + "）";
+          }
+          toast(msg, "success");
+          status.textContent = detail;
+        }
+      } catch (e) {
+        toast("生成异常：" + e, "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "生成播放列表（仅有效源）"; }
+      }
+    }
+
     $("#test-start").onclick = trigger;
     $("#test-pause").onclick = () => api("POST", "/api/test/pause", { session_id: sessionId });
     $("#test-resume").onclick = () => api("POST", "/api/test/resume", { session_id: sessionId });
     $("#test-cancel").onclick = () => api("POST", "/api/test/cancel", { session_id: sessionId });
+    const genBtn = $("#test-generate");
+    if (genBtn) genBtn.onclick = generatePlaylist;
   }
 
   // ── boot ─────────────────────────────────────────────────────

@@ -208,6 +208,7 @@ func NewRouter(conn *sql.DB, cfg *config.Config, mgr *manager.Manager, epgMgr *e
 	s.route("POST", "/api/test/cancel", s.hTestCancel, true)
 	s.route("GET", "/api/test/status", s.hTestStatus, true)
 	s.route("GET", "/api/test/stream", s.hTestStream, true)
+	s.route("POST", "/api/test/generate-playlist", s.hTestGeneratePlaylist, true)
 
 	// ── EPG（电子节目单） ───────────────────────────────────────────────────
 	s.route("GET", "/api/epg/sources", s.hListEPGSources, true)

@@ -110,6 +110,10 @@ func DefaultValues() map[string]string {
 		"Output.enable_filter":           "False",
 		"Output.whitelist_force_keep":    "False",
 		"Output.output_dir":              "./www/output",
+		"Output.separate_ipv4_ipv6":      "True",
+		"Output.ipv4_filename":           "live-ipv4.m3u",
+		"Output.ipv6_filename":           "live-ipv6.m3u",
+		"Output.output_all_valid":        "False",
 		// [Logging]
 		"Logging.level":        "INFO",
 		"Logging.file":         "./log/app.log",
@@ -288,6 +292,10 @@ func FieldMeta() map[string]FieldInfo {
 		"Output.enable_filter":           {Label: "启用过滤", Description: "按过滤规则剔除不达标源。"},
 		"Output.whitelist_force_keep":    {Label: "白名单强制保留", Description: "白名单中的频道即便不达标也强制保留。"},
 		"Output.output_dir":              {Label: "输出目录", Description: "生成文件（M3U/EPG）的写入目录。"},
+		"Output.separate_ipv4_ipv6":      {Label: "IPv4/IPv6 分文件", Description: "将 IPv4 与 IPv6 源分别输出到独立 M3U 文件。"},
+		"Output.ipv4_filename":           {Label: "IPv4 文件名", Description: "IPv4 单栈播放列表文件名。"},
+		"Output.ipv6_filename":           {Label: "IPv6 文件名", Description: "IPv6 单栈播放列表文件名。"},
+		"Output.output_all_valid":        {Label: "base 输出全部有效源", Description: "关闭过滤时，base 文件输出全部探测成功源而非按分辨率聚合（默认否）。"},
 		// [Filter]
 		"Filter.max_latency":            {Label: "最大延迟", Description: "超过该延迟（毫秒）的源将被过滤。"},
 		"Filter.min_bitrate":            {Label: "最小码率", Description: "低于该码率（Kbps）的源将被过滤。"},
@@ -533,6 +541,10 @@ func (c *Config) GetOutputParams() map[string]any {
 		"enable_filter":           c.GetBool("Output", "enable_filter", false),
 		"whitelist_force_keep":    c.GetBool("Output", "whitelist_force_keep", false),
 		"output_dir":              outputDir,
+		"separate_ipv4_ipv6":      c.GetBool("Output", "separate_ipv4_ipv6", true),
+		"ipv4_filename":           c.Get("Output", "ipv4_filename", "live-ipv4.m3u"),
+		"ipv6_filename":           c.Get("Output", "ipv6_filename", "live-ipv6.m3u"),
+		"output_all_valid":        c.GetBool("Output", "output_all_valid", false),
 	}
 }
 

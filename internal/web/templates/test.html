@@ -32,6 +32,10 @@
       <button class="btn danger" id="test-cancel">取消</button>
       <span id="test-msg" class="msg"></span>
     </div>
+    <div class="row" style="margin-top:10px;">
+      <!-- 测完一键落盘：仅在测试完成后显示，把本次测速通过的源直接写入 live.m3u，不重跑测试 -->
+      <button class="btn primary" id="test-generate" style="display:none">生成 live.m3u（仅有效源）</button>
+    </div>
     <div class="progress"><i id="test-bar"></i></div>
     <div id="test-status" class="muted">空闲</div>
   </div>
